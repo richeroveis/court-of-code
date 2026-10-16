@@ -29,7 +29,7 @@ validator consensus with a transparent, appealable transition.
 | Pinned runner | `py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6` (GenVM v0.2.16) |
 | Contract source sha256 | `7fafd77fae0d92121a04783c5b2adb9788bd8820df3bc1133ba4982713c55d74` |
 | Release tag | `studionet-v1` |
-| Deployed commit | `__COMMIT_HASH__` |
+| Deployed commit | `92be61c3e350d36dede2c116c2cf9d16899209cd` |
 
 The deployed source hash and the on-chain ABI schema are cross-checked in
 [docs/deployment.md](docs/deployment.md).
