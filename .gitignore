@@ -21,11 +21,19 @@ artifacts/
 
 # Logs
 *.log
+logs/
 
 # Media (demo video is generated, not committed on main)
 *.mp4
 *.webm
 video-raw/
+
+# Video working artifacts (the record_clips.mjs / build_video.mjs scripts stay tracked)
+video/*.png
+video/*.srt
+video/clips/
+video/concat.txt
+video/timeline.json
 
 # Tooling / checkpoint state
 evidence/_checkpoint.json

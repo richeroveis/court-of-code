@@ -99,11 +99,22 @@ def test_tribunal_stats_match_seed(deployed):
 
 def test_juror_reputation_reflects_brief_and_upvote(deployed):
     contract, _ = deployed
+    juror1 = "0x9926c6407afb19b6349a9a68294e70b2ca3c4f29"
+    # Reputation is a pure function of jury activity: +10 per brief authored and +3 per
+    # upvote received on those briefs. Recompute it from live brief data so the assertion
+    # holds as the public demo accumulates more activity beyond the original seed.
+    authored = 0
+    received_upvotes = 0
+    for case in _read(contract, "get_all_cases"):
+        for b in _read(contract, "get_case_briefs", [case["case_id"]]):
+            if b["juror"].lower() == juror1:
+                authored += 1
+                received_upvotes += b["upvotes"]
+    expected = 10 * authored + 3 * received_upvotes
     board = _read(contract, "get_juror_leaderboard")
     reps = {r["juror"].lower(): r["reputation"] for r in board}
-    # juror1 authored a brief (+10) and received one upvote (+3) = 13
-    juror1 = "0x9926c6407afb19b6349a9a68294e70b2ca3c4f29"
-    assert reps.get(juror1) == 13
+    assert authored >= 1 and expected > 0
+    assert reps.get(juror1) == expected
 
 
 def test_split_awards_are_claimable(deployed):

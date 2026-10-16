@@ -35,6 +35,13 @@ through `adjudicate_case_deterministic`, which moves the case to `ADJUDICATED`.
 - Finding L2 (cancel blocked by early briefs): once `amicus_count > 0`, `cancel_case` is
   refused, but `adjudicate_case_live` remains available, so funds still reach a party.
   FIXED / proven reachable: `test_cancel_blocked_when_briefs_exist` plus every live test.
+- Finding L3 (dead evidence url): if a claimant url becomes unreachable after filing, every
+  `adjudicate_case_live` call reverts because the web render throws inside the non-deterministic
+  block, so the case cannot be resolved through the live path. The recovery is
+  `adjudicate_case_deterministic`, open to the owner or either party, which splits the escrow
+  without fetching evidence. FIXED / proven: `test_deterministic_full_claimant` and the party
+  access tests. Accepted: there is no on-chain deadline because the exit is permissionless plus
+  owner arbitration, which is the intended tribunal model for this milestone.
 
 ## 3. Race conditions between competing transitions
 
@@ -101,6 +108,19 @@ through `adjudicate_case_deterministic`, which moves the case to `ADJUDICATED`.
   cannot change the settlement rule: the split is derived from the quantized label and the
   deterministic spec-token cap, both applied in contract code after consensus, not from any
   number embedded in the page. FIXED / proven: `test_live_prompt_injection_cannot_move_funds`.
+- Finding C4 (party-authored rubric and title are not sanitized): `case_title` and
+  `contract_rubric` are supplied by the claimant at filing time and are inserted into the
+  tribunal prompt as the agreed specification, but unlike fetched evidence they are NOT run
+  through `_sanitize_evidence`. A hostile claimant could embed delimiter-like text or an
+  over-reaching instruction in the rubric to try to sway the model toward a larger self
+  award. This is an OPEN, accepted limitation for this milestone, not a fund leak: the
+  contract custodies no real value (escrow and awards are a notional u256 ledger), the rubric
+  and title are length capped at 1000 and 100, the award is still forced onto the 500 bps
+  ladder and gated by the deterministic spec-token cap, the respondent rebuttal is fetched and
+  sanitized into the same prompt, and every validator re-runs the identical prompt so no single
+  party controls the outcome unilaterally. Planned hardening for a future milestone: run title
+  and rubric through the same delimiter-defusing and control-char sanitizer, and require a
+  respondent rubric acknowledgement before a case becomes adjudicable.
 - Fail-closed on bad model output: a non-dict tribunal result raises an `[LLM_ERROR]` so the
   transaction rotates instead of persisting garbage. Note: this is a leader-path test only.
 - OPEN (documented, accepted): `adjudicate_case_live` is permissionless (any account may

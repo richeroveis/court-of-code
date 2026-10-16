@@ -75,6 +75,26 @@ them on the final run rather than double-applying them.
 - Rollback check: juror1 claimable is still 0 after the failed `withdraw_award`,
   confirming a reverted transaction applied no state change.
 
+## Post-seed live activity (honest state drift)
+
+The tribunal is a live, permissionless contract, so on-chain state has moved beyond the
+seed table above. This is expected for a public demo and is reported here rather than hidden:
+
+- Case 1 is unchanged: still `ADJUDICATED`, `SPLIT_REMEDY`, 6000 bps, payouts conserved. It is
+  the seeded showcase and no further writes touched it.
+- Case 2 accumulated jury activity while the demo video was recorded against the live site.
+  Each recording pass used a fresh burner juror and, on the open case, filed one amicus brief
+  and cast one upvote. Case 2 now holds 7 briefs (the seeded `auditcrew` brief plus six juror
+  briefs), and the seeded `auditcrew` brief on case 2 has been upvoted up to 6 times by
+  distinct throwaway jurors.
+- Case 2 remains `OPEN_FOR_REBUTTAL`. Every `adjudicate_case_live` trigger from the UI reached
+  the leader but hit a transient studionet RPC failure during full consensus, so the write
+  reverted and left the case open. This is a live confirmation of finding L3 (fail closed, no
+  partial state) and of the accounting invariant: a reverted adjudication credited no award.
+
+The seed table and the 3-way source identity above describe the deployment itself, which is
+unchanged. Only the jury activity on the open case has grown through normal live use.
+
 ## Reproduce
 
 ```
