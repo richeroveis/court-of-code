@@ -71,6 +71,14 @@ def _patched_os_unlink(path, *args, **kwargs):
 
 def pytest_configure(config):
     """Install the deferred-unlink shim before any test collection happens."""
+    # Pin the direct-mode GenVM runner to v0.2.16 so a cold CI cache does not fall
+    # back to the latest release tag (whose asset layout can differ and 404).
+    try:
+        from gltest.direct import sdk_loader
+
+        sdk_loader.get_latest_version = lambda: "v0.2.16"
+    except Exception:  # noqa: BLE001 - best effort; local cache may already resolve
+        pass
     # Keep a reference to the original so the patch is idempotent.
     if not hasattr(os, "__remove__"):
         os.__remove__ = os.remove
