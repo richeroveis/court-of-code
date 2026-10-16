@@ -22,10 +22,10 @@ const FF = require("ffmpeg-static");
 const beats = [
   { n: 1, keep: 7, cap: "1. One-click juror burner wallet reads the live tribunal, no extension" },
   { n: 2, keep: 9, cap: "2. What-if simulator: drag the AI-consensus sliders, see exact settlement math" },
-  { n: 3, keep: 9, cap: "3. Consensus & Prompt Inspector: the gl.nondet pipeline behind the verdict" },
-  { n: 4, keep: 9, cap: "4. File an on-chain amicus brief, which also casts your weighted vote" },
-  { n: 5, keep: 8, cap: "5. Upvote a fellow juror's brief to boost its signal" },
-  { n: 6, keep: 9, cap: "6. Trigger live GenLayer consensus, confetti on FINALIZED" },
+  { n: 3, keep: 9, cap: "3. Case detail: SVG award gauge, split-screen evidence, prompt inspector" },
+  { n: 4, keep: 9, cap: "4. Filing an on-chain amicus brief: leader-only write FINALIZES and fires confetti" },
+  { n: 5, keep: 8, cap: "5. Upvoting a fellow juror's brief to boost its signal on the live tribunal" },
+  { n: 6, keep: 9, cap: "6. Triggering live GenLayer full-consensus adjudication on the split award" },
 ];
 
 const STYLE =

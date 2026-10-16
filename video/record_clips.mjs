@@ -36,6 +36,16 @@ async function scrollSel(page, selector) {
   await sleep(900);
 }
 
+// Wait until a write reaches a terminal toast (ok => FINALIZED + confetti + chime,
+// err => reverted), so the clip actually captures the settlement payoff instead of
+// ending on "submitting to consensus". leaderOnly writes settle in a few seconds.
+async function waitToast(page, timeoutMs = 40000) {
+  await Promise.race([
+    page.locator(".toast.ok, .toast.err").first().waitFor({ state: "visible", timeout: timeoutMs }),
+    sleep(timeoutMs),
+  ]).catch(() => {});
+}
+
 // Set a React-controlled range input via the native setter so onChange fires.
 async function setRange(page, nth, value) {
   await page
@@ -86,7 +96,7 @@ const beats = {
     await p.locator(".inspector-head").first().click().catch(() => {});
     await sleep(700);
   } },
-  4: { hold: 3200, run: async (p) => {
+  4: { hold: 3600, run: async (p) => {
     await connectBurner(p);
     await openCase(p, 2);
     await scrollSel(p, 'textarea[placeholder^="technical argument"]');
@@ -95,12 +105,14 @@ const beats = {
     );
     await sleep(1200);
     await p.getByRole("button", { name: /File Brief & Vote/ }).click();
+    await waitToast(p);
   } },
-  5: { hold: 3200, run: async (p) => {
+  5: { hold: 3600, run: async (p) => {
     await connectBurner(p);
     await openCase(p, 2);
     await scrollSel(p, ".brief");
     await p.locator(".brief", { hasText: "auditcrew" }).first().locator("button", { hasText: "+" }).click();
+    await waitToast(p);
   } },
   6: { hold: 3600, run: async (p) => {
     await connectBurner(p);
