@@ -1,4 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import confetti from "canvas-confetti";
+import {
+  Scale,
+  Volume2,
+  VolumeX,
+  Gavel,
+  ShieldAlert,
+  Sparkles,
+  Radio,
+  Trophy,
+  Wallet,
+  RefreshCw,
+} from "lucide-react";
 import {
   WalletState,
   contractAddress,
@@ -9,6 +22,22 @@ import {
   readContract,
   writeContract,
 } from "./lib/genlayer";
+import BackgroundFX from "./components/BackgroundFX";
+import Gauge from "./components/Gauge";
+import Simulator from "./components/Simulator";
+import PromptInspector from "./components/PromptInspector";
+import GuardLab from "./components/GuardLab";
+import { isMuted, toggleMuted, click, hum, chime, errorBuzz } from "./lib/sound";
+
+function celebrate() {
+  confetti({
+    particleCount: 90,
+    spread: 78,
+    startVelocity: 32,
+    origin: { y: 0.66 },
+    colors: ["#22d3ee", "#e2be60", "#34d399", "#f59e0b"],
+  });
+}
 
 interface DisputeCase {
   case_id: number;
@@ -82,6 +111,13 @@ export default function App() {
   const [claimable, setClaimable] = useState(0);
   const [toast, setToast] = useState<Toast | null>(null);
   const [busy, setBusy] = useState(false);
+  const [muted, setMutedState] = useState(isMuted());
+
+  const toggleSound = () => {
+    const m = toggleMuted();
+    setMutedState(m);
+    if (!m) click();
+  };
 
   const flash = (kind: Toast["kind"], text: string) => setToast({ kind, text });
 
@@ -115,13 +151,16 @@ export default function App() {
   );
 
   const connect = async (mode: "burner" | "metamask") => {
+    click();
     try {
       setBusy(true);
       const w = mode === "burner" ? connectBurner() : await connectMetaMask();
       setWallet(w);
+      hum();
       flash("ok", `Connected ${mode} wallet ${short(w.address)}`);
       await load(w, selectedId);
     } catch (e) {
+      errorBuzz();
       flash("err", (e as Error).message);
     } finally {
       setBusy(false);
@@ -129,6 +168,7 @@ export default function App() {
   };
 
   const rotate = async () => {
+    click();
     rotateBurner();
     await connect("burner");
     flash("ok", "Rotated to a fresh juror identity");
@@ -136,11 +176,13 @@ export default function App() {
 
   const selectCase = async (id: number) => {
     if (!wallet) return;
+    click();
     setSelectedId(id);
     const one = await readContract<DisputeCase>(wallet, "get_case", [id]);
     setSelected(one);
     const bs = await readContract<Brief[]>(wallet, "get_case_briefs", [id]);
     setBriefs(bs);
+    hum();
   };
 
   const runWrite = async (
@@ -151,20 +193,55 @@ export default function App() {
     if (!wallet) return;
     try {
       setBusy(true);
+      hum();
       flash("pending", `${opts.label}: submitting to studionet consensus...`);
       const res = await writeContract(wallet, fn, args, { leaderOnly: opts.leaderOnly });
       if (res.statusName !== "FINALIZED") {
+        errorBuzz();
         flash("err", `${opts.label}: ${res.statusName} (tx ${short(res.txHash)})`);
         return;
       }
       if (!res.succeeded) {
+        errorBuzz();
         flash("err", `${opts.label}: execution reverted (tx ${short(res.txHash)})`);
         return;
       }
+      chime();
+      celebrate();
       flash("ok", `${opts.label}: FINALIZED tx ${short(res.txHash)}`);
       await load(wallet, selectedId);
     } catch (e) {
+      errorBuzz();
       flash("err", `${opts.label} failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // One-click adversarial probe: attempt to file a self-dealing case (respondent equals
+  // caller). The contract guard must revert it, and nothing is written on chain.
+  const probeGuard = async () => {
+    if (!wallet || busy) return;
+    click();
+    setBusy(true);
+    flash("pending", "Security guard probe: filing self-dealing case (expect revert)...");
+    try {
+      const res = await writeContract(
+        wallet,
+        "file_dispute_case",
+        [wallet.address, "guard probe", "guard rubric text", "TOK", "https://example.com/x", 5000],
+        { leaderOnly: true },
+      );
+      if (!res.succeeded) {
+        errorBuzz();
+        flash("ok", `Guard held: self-dealing case reverted as expected (tx ${short(res.txHash)})`);
+      } else {
+        chime();
+        flash("err", "Guard FAILED: self-dealing case was unexpectedly accepted");
+      }
+    } catch (e) {
+      errorBuzz();
+      flash("ok", `Guard held: probe reverted (${(e as Error).message.slice(0, 60)})`);
     } finally {
       setBusy(false);
     }
@@ -191,20 +268,31 @@ export default function App() {
 
   return (
     <div className="app">
+      <BackgroundFX />
       <header className="top">
         <img src={LOGO_URL} alt="CourtOfCode" />
         <div className="title-block">
-          <h1>CourtOfCode Tribunal</h1>
+          <h1>
+            <Scale size={18} className="h1icon" /> CourtOfCode Tribunal
+          </h1>
           <div className="sub">
             Decentralized bounty &amp; PR dispute court on GenLayer studionet
           </div>
         </div>
         <div className="spacer" />
+        <button
+          className="ghost iconbtn"
+          onClick={toggleSound}
+          title={muted ? "Unmute UI sound" : "Mute UI sound"}
+          aria-label={muted ? "Unmute" : "Mute"}
+        >
+          {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+        </button>
         <div className="wallet">
           {!wallet && (
             <>
               <button className="primary" disabled={busy} onClick={() => connect("burner")}>
-                1-Click Instant Juror Wallet
+                <Wallet size={14} className="btnicon" /> 1-Click Instant Juror Wallet
               </button>
               <button disabled={busy} onClick={() => connect("metamask")}>
                 Connect MetaMask
@@ -216,7 +304,7 @@ export default function App() {
               <span className="badge">{wallet.mode}</span>
               <span className="badge live">{short(wallet.address)}</span>
               <button className="ghost" disabled={busy} onClick={rotate} title="New burner identity">
-                Rotate Identity
+                <RefreshCw size={13} className="btnicon" /> Rotate Identity
               </button>
               <button className="ghost" onClick={() => setWallet(null)}>
                 Disconnect
@@ -226,10 +314,18 @@ export default function App() {
         </div>
       </header>
 
+      <Simulator
+        escrow={selected?.disputed_escrow ?? 250000}
+        bps={selected?.claimant_award_bps ?? 6000}
+        specTokenFound={(selected?.claimant_award_bps ?? 6000) > 5000}
+      />
+
       <div className="grid">
         <div>
           <section className="panel">
-            <h2>Docket</h2>
+            <h2>
+              <Gavel size={15} className="h2icon" /> Docket
+            </h2>
             {!wallet && <div className="muted">Connect a wallet to read the live tribunal.</div>}
             {wallet && (
               <div className="case-list">
@@ -293,18 +389,25 @@ export default function App() {
               </div>
 
               <div className="award-bar">
-                <div className="award-pct">
-                  Split award: {awardPct.toFixed(1)}% claimant / {(100 - awardPct).toFixed(1)}%
-                  respondent &middot;{" "}
-                  <span className={`status-chip status-${selected.status}`}>{selected.verdict_label}</span>
-                </div>
-                <div className="award-track">
-                  <div className="award-fill" style={{ width: `${awardPct}%` }} />
-                </div>
-                <div className="award-labels">
-                  <span>0 bps</span>
-                  <span>{selected.claimant_award_bps} bps to claimant</span>
-                  <span>10000 bps</span>
+                <div className="award-flex">
+                  <div className="award-main">
+                    <div className="award-pct">
+                      Split award: {awardPct.toFixed(1)}% claimant / {(100 - awardPct).toFixed(1)}%
+                      respondent &middot;{" "}
+                      <span className={`status-chip status-${selected.status}`}>{selected.verdict_label}</span>
+                    </div>
+                    <div className="award-track">
+                      <div className="award-fill" style={{ width: `${awardPct}%` }} />
+                    </div>
+                    <div className="award-labels">
+                      <span>0 bps</span>
+                      <span>{selected.claimant_award_bps} bps to claimant</span>
+                      <span>10000 bps</span>
+                    </div>
+                  </div>
+                  <div className="award-gauge">
+                    <Gauge value={selected.claimant_award_bps} caption="claimant award" />
+                  </div>
                 </div>
                 {selected.status === "ADJUDICATED" && (
                   <div className="meta-grid">
@@ -331,6 +434,8 @@ export default function App() {
                 )}
               </div>
 
+              <PromptInspector c={selected} />
+
               <div className="actions">
                 {isRespondent && selected.status === "OPEN_FOR_REBUTTAL" && (
                   <button
@@ -356,7 +461,7 @@ export default function App() {
                       setLiveBusy(false);
                     }}
                   >
-                    {liveBusy ? "Adjudicating (full consensus)..." : "Trigger Live AI Adjudication"}
+                    {liveBusy ? "Adjudicating (full consensus)..." : (<><Radio size={13} className="btnicon" /> Trigger Live AI Adjudication</>)}
                   </button>
                 )}
                 {selected.status === "ADJUDICATED" && claimable > 0 && eq(selected.claimant, wallet!.address) && (
@@ -380,7 +485,7 @@ export default function App() {
 
           {selected && (
             <section className="panel" style={{ marginTop: 16 }}>
-              <h2>Amicus Briefs ({briefs.length})</h2>
+              <h2><Gavel size={15} className="h2icon" /> Amicus Briefs ({briefs.length})</h2>
               {briefs.map((b) => (
                 <div className="brief" key={b.brief_id}>
                   <div className="head">
@@ -463,7 +568,9 @@ export default function App() {
         <div>
           {wallet && (
             <section className="panel">
-              <h2>File New Dispute Case</h2>
+              <h2>
+                <Gavel size={15} className="h2icon" /> File New Dispute Case
+              </h2>
               <div className="row">
                 <label>Respondent address</label>
                 <input value={fileForm.respondent} onChange={(e) => setFileForm({ ...fileForm, respondent: e.target.value })} />
@@ -506,11 +613,16 @@ export default function App() {
                   File Case
                 </button>
                 <button className="ghost" onClick={() => setFileForm({ ...PRESET })}>
-                  Quick-Fill Preset
+                  <Sparkles size={13} className="btnicon" /> Quick-Fill Preset
+                </button>
+                <button className="danger" disabled={busy} onClick={probeGuard} title="Fire an adversarial probe that must revert">
+                  <ShieldAlert size={13} className="btnicon" /> Test Guard (Revert)
                 </button>
               </div>
             </section>
           )}
+
+          <GuardLab wallet={wallet} />
 
           {selected && isRespondent && (
             <section className="panel" style={{ marginTop: 16 }}>
@@ -527,7 +639,7 @@ export default function App() {
           )}
 
           <section className="panel" style={{ marginTop: 16 }}>
-            <h2>Tribunal Stats</h2>
+            <h2><Sparkles size={15} className="h2icon" /> Tribunal Stats</h2>
             {stats ? (
               <div className="meta-grid">
                 <div className="cell"><div className="k">Cases</div>{stats.total_cases}</div>
@@ -543,7 +655,7 @@ export default function App() {
           </section>
 
           <section className="panel" style={{ marginTop: 16 }}>
-            <h2>Juror Leaderboard</h2>
+            <h2><Trophy size={15} className="h2icon" /> Juror Leaderboard</h2>
             {leaderboard.length === 0 && <div className="muted">No jurors yet.</div>}
             {leaderboard.map((r) => (
               <div className="leader-row" key={r.juror}>
@@ -554,7 +666,7 @@ export default function App() {
           </section>
 
           <section className="panel" style={{ marginTop: 16 }}>
-            <h2>Contract</h2>
+            <h2><Scale size={15} className="h2icon" /> Contract</h2>
             <div className="row">
               <input value={contract} onChange={(e) => setContract(e.target.value)} />
             </div>

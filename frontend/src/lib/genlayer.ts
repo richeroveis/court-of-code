@@ -67,7 +67,7 @@ export function rotateBurner(): string {
 }
 
 export function connectBurner(): WalletState {
-  const account = createAccount(getOrCreateBurnerKey());
+  const account = createAccount(getOrCreateBurnerKey() as `0x${string}`);
   const client = createClient({ chain: studionet, account });
   return { mode: "burner", address: account.address, client, account };
 }
@@ -81,7 +81,7 @@ export async function connectMetaMask(): Promise<WalletState> {
     method: "eth_requestAccounts",
   })) as string[];
   const address = accounts[0];
-  const client = createClient({ provider: eth, account: address, chain: studionet });
+  const client = createClient({ provider: eth, account: address as `0x${string}`, chain: studionet });
   return { mode: "metamask", address, client };
 }
 
@@ -124,8 +124,10 @@ export async function writeContract(
     leaderOnly: opts.leaderOnly ?? true,
   })) as string;
 
+  // genlayer-js forwards to viem, whose `Hash` is a branded 66-char literal; the
+  // runtime value is already a 0x hash, so cast the argument across the brand.
   const receipt = (await wallet.client.waitForTransactionReceipt({
-    hash,
+    hash: hash as never,
     interval: 3000,
     retries: 60,
   })) as ReceiptLike;
