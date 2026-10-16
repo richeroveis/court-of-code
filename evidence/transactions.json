@@ -1,0 +1,122 @@
+{
+  "network": "studionet",
+  "chain_id": 61999,
+  "contract_address": "0x5049635f17E614f3BE0D3446af166DBC8E61c3eC",
+  "owner": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+  "respondent": "0xFF21Bc38046f8299544598C0e44C964A8E49E2C5",
+  "juror1": "0x9926C6407aFB19B6349A9a68294e70b2ca3C4F29",
+  "juror2": "0xeAC48B961A8db86A5F9fC218b598712d10218f5c",
+  "identity": {
+    "local_file_sha256": "7fafd77fae0d92121a04783c5b2adb9788bd8820df3bc1133ba4982713c55d74",
+    "submitted_code_sha256": "7fafd77fae0d92121a04783c5b2adb9788bd8820df3bc1133ba4982713c55d74",
+    "onchain_schema_sha256": "562f54ec29b461d5f39b9bf18a216caaa4ef2736bc094524f4691b9a6afec14b",
+    "source_derived_schema_sha256": "562f54ec29b461d5f39b9bf18a216caaa4ef2736bc094524f4691b9a6afec14b",
+    "file_matches_submitted_code": true,
+    "onchain_matches_source": true
+  },
+  "case_1": {
+    "amicus_count": 2,
+    "case_id": 1,
+    "case_title": "React Native offline cache bounty",
+    "claimant": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+    "claimant_award_bps": 6000,
+    "claimant_evidence_url": "https://github.com/nimbus-labs/mobile/pull/312",
+    "claimant_payout": 150000,
+    "contract_rubric": "Ship an offline-first cache layer, keep the public api, must pass the PR-312 suite",
+    "disputed_escrow": 250000,
+    "judicial_opinion": "Deliverable substantially meets spec but a known regression remains; 60/40 split",
+    "mandatory_spec_token": "PR-312",
+    "rebuttal_note": "Cache layer drops writes under airplane mode; the suite is not actually green",
+    "respondent": "0xFF21Bc38046f8299544598C0e44C964A8E49E2C5",
+    "respondent_payout": 100000,
+    "respondent_rebuttal_url": "https://github.com/nimbus-labs/mobile/pull/318",
+    "status": "ADJUDICATED",
+    "verdict_label": "SPLIT_REMEDY",
+    "votes_for_claimant": 1,
+    "votes_for_respondent": 1
+  },
+  "tribunal_stats": {
+    "adjudicated_cases": 1,
+    "cancelled_cases": 0,
+    "escrow_in_dispute": 180000,
+    "open_cases": 1,
+    "total_briefs": 2,
+    "total_cases": 2,
+    "votes_for_claimant": 1,
+    "votes_for_respondent": 1
+  },
+  "case_1_briefs": [
+    {
+      "argument": "Reviewed the diff; the offline queue and rehydrate path both land and PR-312 is green on CI",
+      "brief_id": 1,
+      "case_id": 1,
+      "juror": "0x9926C6407aFB19B6349A9a68294e70b2ca3C4F29",
+      "juror_handle": "auditcrew",
+      "side": "SUPPORT_CLAIMANT",
+      "upvotes": 1
+    },
+    {
+      "argument": "Agree with the sponsor; the crash under airplane mode is a real regression, partial credit at best",
+      "brief_id": 2,
+      "case_id": 1,
+      "juror": "0xeAC48B961A8db86A5F9fC218b598712d10218f5c",
+      "juror_handle": "stableship",
+      "side": "SUPPORT_RESPONDENT",
+      "upvotes": 0
+    }
+  ],
+  "juror_leaderboard": [
+    {
+      "juror": "0x9926C6407aFB19B6349A9a68294e70b2ca3C4F29",
+      "reputation": 13
+    },
+    {
+      "juror": "0xeAC48B961A8db86A5F9fC218b598712d10218f5c",
+      "reputation": 10
+    }
+  ],
+  "claimant_award": 150000,
+  "respondent_award": 100000,
+  "transactions": [
+    {
+      "detail": "case 1 open for rebuttal",
+      "execution_result": "SUCCESS",
+      "method": "file_dispute_case",
+      "status_name": "FINALIZED",
+      "step": "file_case_1",
+      "tx_hash": "0xd87b9f3175e53c8e273ea9f654de10c00694f5c9a67afd3d34732f6d8974978a"
+    },
+    {
+      "detail": "case 2 open for rebuttal",
+      "execution_result": "SUCCESS",
+      "method": "file_dispute_case",
+      "status_name": "FINALIZED",
+      "step": "file_case_2",
+      "tx_hash": "0xc5a197669465d1f68669a30e10c7fd1d43ad7b7db928c94a556a4a32e20beaaf"
+    },
+    {
+      "detail": "case 1 -> READY_FOR_TRIAL",
+      "execution_result": "SUCCESS",
+      "method": "submit_respondent_rebuttal",
+      "status_name": "FINALIZED",
+      "step": "submit_rebuttal",
+      "tx_hash": "0x3fc0b058de86710a05570daa229b9117cb6f04e8a77f55b92d9ba3e65c4c0ecc"
+    },
+    {
+      "detail": "juror1 supports claimant",
+      "execution_result": "SUCCESS",
+      "method": "file_amicus_brief",
+      "status_name": "FINALIZED",
+      "step": "brief_claimant",
+      "tx_hash": "0xeace785a60dc02f20373cad1de9dba245e0857af8d85d443cecc1d873396a8fc"
+    },
+    {
+      "detail": "juror1 holds no award; withdrawal reverts and applies no state change",
+      "execution_result": "ERROR",
+      "method": "withdraw_award",
+      "status_name": "FINALIZED",
+      "step": "expected_rollback",
+      "tx_hash": "0x53e39cdb25f55e638c3e7658ccc14bce4538b2992dd57c054f15fab1342434f1"
+    }
+  ]
+}

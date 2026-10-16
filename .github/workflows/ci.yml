@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    env:
+      # Direct-mode tests never sign or reach the network; a placeholder keeps the
+      # studionet config resolvable so the gltest plugin can load it.
+      GENLAYER_PRIVATE_KEY: "0x0000000000000000000000000000000000000000000000000000000000000001"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install GenLayer tooling
+        run: pip install genvm-linter genlayer-test pytest
+      - name: Seed GenVM v0.2.16 artifacts
+        run: genvm-lint download --version v0.2.16 || true
+      - name: Lint and validate the contract
+        run: genvm-lint check contracts/court_of_code.py
+      - name: Run direct-mode tests
+        run: gltest tests/test_court_of_code_direct.py -p no:cacheprovider

@@ -1,0 +1,12 @@
+networks:
+  default: studionet
+  studionet:
+    accounts:
+      - "${GENLAYER_PRIVATE_KEY}"
+  localnet:
+    leader_only: false
+
+paths:
+  contracts: contracts
+
+environment: .env
