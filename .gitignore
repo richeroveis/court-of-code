@@ -7,6 +7,9 @@
 node_modules/
 dist/
 build/
+*.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js
 
 # Python
 __pycache__/
@@ -31,6 +34,7 @@ video-raw/
 # Video working artifacts (the record_clips.mjs / build_video.mjs scripts stay tracked)
 video/*.png
 video/*.srt
+video/*.wav
 video/clips/
 video/concat.txt
 video/timeline.json

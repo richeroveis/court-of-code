@@ -62,6 +62,15 @@ split-screen evidence bench comparing the claimant deliverable against the respo
 rebuttal, a live split-award visualizer, and every tribunal action. Deterministic writes
 use `leaderOnly: true` for speed; `adjudicate_case_live` runs on full consensus.
 
+It also carries an interactive Payout & Consensus Simulator (drag the AI-consensus and
+escrow sliders to preview the exact 500 bps quantized, spec-token-capped,
+escrow-conserving settlement before submitting a transaction), a per-case Consensus &
+Prompt Inspector drawer that lays bare the `gl.nondet.web.render` evidence sources, the
+mandatory spec-token check and the `prompt_comparative` pipeline, one-click Test Security
+Guard (expected revert) and Quick-Fill actions, a custom SVG award gauge, an ambient
+animated background, a zero-dependency Web Audio sound layer with a navbar mute toggle,
+and a confetti burst when a write transaction reaches FINALIZED.
+
 ```
 cd frontend
 npm install
@@ -94,7 +103,9 @@ tests/                            direct + integration tests, Windows conftest s
 scripts/deploy_studionet.py       idempotent studionet deploy + seed + evidence
 scripts/make_logo.py              regenerates the 512x512 logo
 frontend/                         Vite + React judicial terminal UI
-docs/                             adversarial review, deployment evidence, logo
+tools/generate_soundtrack.py      stdlib-only synthesizer for the demo soundtrack
+video/                            Playwright beat recorder + ffmpeg subtitle/audio muxer
+docs/                             adversarial review, deployment evidence, logo, demo video
 .github/workflows/                CI (lint + direct tests) and Pages deploy
 ```
 

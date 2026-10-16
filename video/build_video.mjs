@@ -1,64 +1,84 @@
-// Builds docs/demo-video-subtitled.mp4 from the five per-beat clips.
-// For each clip: trim off the leading load dead-time, burn the beat's caption to
-// span the whole trimmed segment (so Playwright's non-linear timing is irrelevant),
-// re-encode to a uniform 1280x720/25fps/yuv420p h264 stream, then concat all five.
+// Builds docs/demo-video-subtitled.mp4 from the six per-beat clips recorded by
+// record_clips.mjs (paths come from clips/manifest.json, so it never hardcodes the
+// random Playwright page ids).
+//
+// For each beat: probe the clip length, keep its final `keep` seconds (the beat's
+// action + settle + toast/confetti always land at the tail because the recorder
+// sleeps a hold after the action), burn that beat's caption to span the whole kept
+// segment, and re-encode to a uniform 1280x720 / 25fps / yuv420p h264 stream. The
+// segments are concatenated, then the synthesized soundtrack (video/soundtrack.wav,
+// produced by tools/generate_soundtrack.py with chime accents at these same segment
+// boundaries) is muxed on top as AAC so the final file carries both h264 video and
+// aac stereo audio.
 
 import { execFileSync } from "child_process";
-import { writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
 const FF = require("ffmpeg-static");
 
-const clips = {
-  1: "clips/page@5fd5961b9b662d30430f89f40599e74b.webm",
-  2: "clips/page@479eea2d122750acce33f13b2a07c9a6.webm",
-  3: "clips/page@908125f5ad326d3aaf0f3b6f68a1b2d6.webm",
-  4: "clips/page@9485b010b002b297090c39d0020a4c12.webm",
-  5: "clips/page@d0bf3bd43a2fd2cec4d04356f39a7c55.webm",
-};
-
-// start = clipDuration - keep, tuned per clip so each action + toast is included.
-const plan = {
-  1: { start: 4.36, keep: 10.0, cap: "1. One-click juror burner wallet, no extension needed" },
-  2: { start: 6.6, keep: 10.0, cap: "2. A seeded dispute: split-screen evidence and the split-award bar" },
-  3: { start: 7.24, keep: 11.0, cap: "3. Filing an on-chain amicus brief, which also casts a vote" },
-  4: { start: 11.92, keep: 11.0, cap: "4. Upvoting a fellow juror's brief to boost its signal" },
-  5: { start: 13.14, keep: 6.5, cap: "5. Triggering GenLayer consensus on the split award" },
-};
+// keep = seconds of the clip tail to show; cap = the burned subtitle for that beat.
+const beats = [
+  { n: 1, keep: 7, cap: "1. One-click juror burner wallet reads the live tribunal, no extension" },
+  { n: 2, keep: 9, cap: "2. What-if simulator: drag the AI-consensus sliders, see exact settlement math" },
+  { n: 3, keep: 9, cap: "3. Consensus & Prompt Inspector: the gl.nondet pipeline behind the verdict" },
+  { n: 4, keep: 9, cap: "4. File an on-chain amicus brief, which also casts your weighted vote" },
+  { n: 5, keep: 8, cap: "5. Upvote a fellow juror's brief to boost its signal" },
+  { n: 6, keep: 9, cap: "6. Trigger live GenLayer consensus, confetti on FINALIZED" },
+];
 
 const STYLE =
   "FontName=Arial,FontSize=13,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,BackColour=&H80000000,Outline=1,Shadow=0,Alignment=2,MarginV=14";
 
-function srtTime(s) {
-  const ms = Math.round((s % 1) * 1000);
-  const total = Math.floor(s);
-  const h = String(Math.floor(total / 3600)).padStart(2, "0");
-  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
-  const sec = String(total % 60).padStart(2, "0");
-  return `${h}:${m}:${sec},${String(ms).padStart(3, "0")}`;
+function probeDuration(path) {
+  let s = "";
+  try {
+    s = execFileSync(FF, ["-i", path], { stdio: ["ignore", "ignore", "pipe"] }).toString();
+  } catch (e) {
+    s = e.stderr ? e.stderr.toString() : "";
+  }
+  const d = s.match(/Duration: (\d+):(\d+):([\d.]+)/);
+  if (!d) throw new Error(`could not probe duration of ${path}`);
+  return Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]);
 }
 
+function srtTime(sec) {
+  const ms = Math.round((sec % 1) * 1000);
+  const total = Math.floor(sec);
+  const h = String(Math.floor(total / 3600)).padStart(2, "0");
+  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+  const ss = String(total % 60).padStart(2, "0");
+  return `${h}:${m}:${ss},${String(ms).padStart(3, "0")}`;
+}
+
+const manifest = JSON.parse(readFileSync("clips/manifest.json", "utf8"));
+const clipFor = (n) => (manifest.find((e) => e.n === n) || {}).path;
+
 const parts = [];
-for (const n of [1, 2, 3, 4, 5]) {
-  const p = plan[n];
-  const srtPath = `capseg${n}.srt`;
-  writeFileSync(
-    srtPath,
-    `1\n${srtTime(0)} --> ${srtTime(p.keep)}\n${p.cap}\n`,
-    "utf8",
-  );
-  const out = `capseg${n}.mp4`;
+let running = 0;
+const boundaries = [];
+for (const b of beats) {
+  const clip = clipFor(b.n);
+  if (!clip || !existsSync(clip)) throw new Error(`missing clip for beat ${b.n}: ${clip}`);
+  const dur = probeDuration(clip);
+  const start = Math.max(0, dur - b.keep);
+  boundaries.push(running);
+  running += b.keep;
+
+  const srtPath = `capseg${b.n}.srt`;
+  writeFileSync(srtPath, `1\n${srtTime(0)} --> ${srtTime(b.keep)}\n${b.cap}\n`, "utf8");
+  const out = `capseg${b.n}.mp4`;
   const vf = `fps=25,scale=1280:720,setsar=1,subtitles=${srtPath}:force_style='${STYLE}'`;
   execFileSync(
     FF,
     [
       "-y",
-      "-ss", String(p.start),
-      "-i", clips[n],
-      "-t", String(p.keep),
+      "-ss", start.toFixed(2),
+      "-i", clip,
+      "-t", String(b.keep),
       "-vf", vf,
-      "-c:v", "libx264", "-crf", "23", "-preset", "medium",
+      "-c:v", "libx264", "-crf", "25", "-preset", "medium",
       "-pix_fmt", "yuv420p", "-r", "25", "-movflags", "+faststart",
       "-an", out,
     ],
@@ -68,10 +88,31 @@ for (const n of [1, 2, 3, 4, 5]) {
   parts.push(out);
 }
 
+// Lossless concat of the uniform segments into a silent video track.
 writeFileSync("concat.txt", parts.map((f) => `file '${f}'`).join("\n") + "\n", "utf8");
+execFileSync(FF, ["-y", "-f", "concat", "-safe", "0", "-i", "concat.txt", "-c", "copy", "video_only.mp4"], {
+  stdio: "inherit",
+});
+
+// Mux the synthesized soundtrack as AAC. -shortest trims audio to the video length.
+if (!existsSync("soundtrack.wav")) {
+  throw new Error("video/soundtrack.wav missing: run tools/generate_soundtrack.py --duration 51 first");
+}
 execFileSync(
   FF,
-  ["-y", "-f", "concat", "-safe", "0", "-i", "concat.txt", "-c", "copy", "../docs/demo-video-subtitled.mp4"],
+  [
+    "-y",
+    "-i", "video_only.mp4",
+    "-i", "soundtrack.wav",
+    "-map", "0:v:0", "-map", "1:a:0",
+    "-c:v", "copy",
+    "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+    "-shortest", "-movflags", "+faststart",
+    "../docs/demo-video-subtitled.mp4",
+  ],
   { stdio: "inherit" },
 );
-console.log("BUILT docs/demo-video-subtitled.mp4");
+
+const finalPath = "../docs/demo-video-subtitled.mp4";
+const mb = statSync(finalPath).size / (1024 * 1024);
+console.log(`\nBUILT ${finalPath}  (~${running.toFixed(1)}s, ${mb.toFixed(2)} MB, segment starts: ${boundaries.join(", ")})`);

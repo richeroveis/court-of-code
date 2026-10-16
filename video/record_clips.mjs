@@ -1,8 +1,8 @@
-// Records the CourtOfCode demo as five independent short clips (one per narrated
+// Records the CourtOfCode demo as six independent short clips (one per narrated
 // beat) using Playwright driving the system Chrome. Each beat is its own browser
 // context, so each produces its own webm. Because a caption is burned to span an
-// entire clip, Playwright's non-linear video timing no longer matters: the caption
-// is always in sync with its own beat. The five clips are concatenated afterwards.
+// entire clip, Playwright's non-linear video timing no longer matters. The clips are
+// concatenated afterwards and a synthesized soundtrack is muxed on top.
 
 import { chromium } from "playwright";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
@@ -36,6 +36,19 @@ async function scrollSel(page, selector) {
   await sleep(900);
 }
 
+// Set a React-controlled range input via the native setter so onChange fires.
+async function setRange(page, nth, value) {
+  await page
+    .locator('.sim input[type="range"]')
+    .nth(nth)
+    .evaluate((el, v) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(el, String(v));
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }, value);
+}
+
 async function clickAdjudicate(page) {
   await scrollSel(page, "button:has-text('Trigger Live AI Adjudication')");
   const btn = page.getByRole("button", { name: /Trigger Live AI Adjudication/ });
@@ -53,14 +66,27 @@ async function clickAdjudicate(page) {
 
 const beats = {
   1: { hold: 3000, run: async (p) => { await connectBurner(p); } },
-  2: { hold: 3200, run: async (p) => {
+  2: { hold: 2600, run: async (p) => {
+    await connectBurner(p);
+    await p.locator(".sim").first().scrollIntoViewIfNeeded().catch(() => {});
+    await setRange(p, 0, 8000);
+    await sleep(800);
+    await setRange(p, 1, 600000);
+    await sleep(800);
+    await p.locator(".sim .chip").first().click().catch(() => {}); // token missing -> cap
+    await sleep(900);
+    await p.locator(".sim .chip").first().click().catch(() => {}); // token found again
+  } },
+  3: { hold: 3000, run: async (p) => {
     await connectBurner(p);
     await openCase(p, 1);
     await p.locator(".evidence-bench").first().scrollIntoViewIfNeeded().catch(() => {});
-    await sleep(900);
+    await sleep(700);
     await scrollSel(p, ".award-bar");
+    await p.locator(".inspector-head").first().click().catch(() => {});
+    await sleep(700);
   } },
-  3: { hold: 3200, run: async (p) => {
+  4: { hold: 3200, run: async (p) => {
     await connectBurner(p);
     await openCase(p, 2);
     await scrollSel(p, 'textarea[placeholder^="technical argument"]');
@@ -70,13 +96,13 @@ const beats = {
     await sleep(1200);
     await p.getByRole("button", { name: /File Brief & Vote/ }).click();
   } },
-  4: { hold: 3200, run: async (p) => {
+  5: { hold: 3200, run: async (p) => {
     await connectBurner(p);
     await openCase(p, 2);
     await scrollSel(p, ".brief");
     await p.locator(".brief", { hasText: "auditcrew" }).first().locator("button", { hasText: "+" }).click();
   } },
-  5: { hold: 3600, run: async (p) => {
+  6: { hold: 3600, run: async (p) => {
     await connectBurner(p);
     await openCase(p, 2);
     await clickAdjudicate(p);
@@ -102,7 +128,7 @@ async function recordBeat(browser, n) {
   }
   await sleep(800);
   await beats[n].run(page);
-  await sleep(beats[n].hold); // hold on the final state / toast
+  await sleep(beats[n].hold);
   await context.close();
   const path = await page.video().path();
   console.log(`CLIP ${n} = ${path}`);
@@ -110,14 +136,13 @@ async function recordBeat(browser, n) {
 }
 
 async function main() {
-  mkdirSync("clips", { recursive: true });
   rmSync("clips", { recursive: true, force: true });
   mkdirSync("clips", { recursive: true });
 
   const browser = await chromium.launch({ channel: "chrome", headless: true });
   const manifest = [];
   const only = process.argv[2] ? Number(process.argv[2]) : null;
-  for (const n of only ? [only] : [1, 2, 3, 4, 5]) {
+  for (const n of only ? [only] : [1, 2, 3, 4, 5, 6]) {
     manifest.push(await recordBeat(browser, n));
   }
   await browser.close();
