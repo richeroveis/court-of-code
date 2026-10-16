@@ -96,7 +96,7 @@ export function readContract<T = unknown>(
   args: unknown[] = [],
 ): Promise<T> {
   return wallet.client.readContract({
-    address: wallet.address,
+    address: contractAddress() as `0x${string}`,
     functionName,
     args: args as never,
   }) as Promise<T>;
@@ -117,7 +117,7 @@ export async function writeContract(
   opts: { leaderOnly?: boolean } = {},
 ): Promise<WriteResult> {
   const hash = (await wallet.client.writeContract({
-    address: wallet.address,
+    address: contractAddress() as `0x${string}`,
     functionName,
     args: args as never,
     value: 0n,
