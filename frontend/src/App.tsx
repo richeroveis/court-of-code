@@ -21,6 +21,7 @@ import {
   rotateBurner,
   readContract,
   writeContract,
+  getWalletBalance,
 } from "./lib/genlayer";
 import BackgroundFX from "./components/BackgroundFX";
 import Gauge from "./components/Gauge";
@@ -59,6 +60,14 @@ interface DisputeCase {
   respondent_payout: number;
   verdict_label: string;
   judicial_opinion: string;
+  proposed_split_bps: number;
+  split_proposer: string;
+  settlement_proposal_note: string;
+  claimant_approved_split: boolean;
+  respondent_approved_split: boolean;
+  filed_at_clock: number;
+  rebuttal_deadline_clock: number;
+  rebuttal_submitted: boolean;
 }
 
 interface Brief {
@@ -80,6 +89,8 @@ interface Stats {
   votes_for_claimant: number;
   votes_for_respondent: number;
   escrow_in_dispute: number;
+  escrow_vault_balance: number;
+  tribunal_clock: number;
 }
 
 interface Toast {
@@ -109,6 +120,7 @@ export default function App() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [leaderboard, setLeaderboard] = useState<{ juror: string; reputation: number }[]>([]);
   const [claimable, setClaimable] = useState(0);
+  const [walletCet, setWalletCet] = useState(0);
   const [toast, setToast] = useState<Toast | null>(null);
   const [busy, setBusy] = useState(false);
   const [muted, setMutedState] = useState(isMuted());
@@ -135,6 +147,8 @@ export default function App() {
         setLeaderboard(lb);
         const cw = await readContract<number>(w, "get_claimable_award", [w.address]);
         setClaimable(Number(cw));
+        const cet = await getWalletBalance(w, w.address);
+        setWalletCet(Number(cet));
         const id = cid ?? (all.length ? all[all.length - 1].case_id : null);
         if (id != null) {
           setSelectedId(id);
@@ -256,10 +270,24 @@ export default function App() {
     argument: "",
   });
   const [liveBusy, setLiveBusy] = useState(false);
+  const [splitForm, setSplitForm] = useState({ bps: 6000, opinion: "" });
 
   const isClaimant = selected && wallet && eq(selected.claimant, wallet.address);
   const isRespondent = selected && wallet && eq(selected.respondent, wallet.address);
+  const isParty = Boolean(isClaimant || isRespondent);
   const isOpen = selected && (selected.status === "OPEN_FOR_REBUTTAL" || selected.status === "READY_FOR_TRIAL");
+  const isAdjudicable =
+    selected &&
+    ["OPEN_FOR_REBUTTAL", "READY_FOR_TRIAL", "REBUTTAL_DEADLINE_PASSED"].includes(selected.status);
+  const isSettled =
+    selected && (selected.status === "ADJUDICATED" || selected.status === "SETTLED_MUTUAL");
+  const hasProposal = selected && (selected.split_proposer === "CLAIMANT" || selected.split_proposer === "RESPONDENT");
+  const canCoSign =
+    isAdjudicable &&
+    hasProposal &&
+    wallet &&
+    ((selected!.split_proposer === "CLAIMANT" && eq(selected!.respondent, wallet.address)) ||
+      (selected!.split_proposer === "RESPONDENT" && eq(selected!.claimant, wallet.address)));
 
   const awardPct = useMemo(
     () => (selected ? (selected.claimant_award_bps / 10000) * 100 : 0),
@@ -409,7 +437,7 @@ export default function App() {
                     <Gauge value={selected.claimant_award_bps} caption="claimant award" />
                   </div>
                 </div>
-                {selected.status === "ADJUDICATED" && (
+                {isSettled && (
                   <div className="meta-grid">
                     <div className="cell">
                       <div className="k">Claimant payout</div>
@@ -435,6 +463,100 @@ export default function App() {
               </div>
 
               <PromptInspector c={selected} />
+
+              <div className="meta-grid" style={{ marginTop: 12 }}>
+                <div className="cell">
+                  <div className="k">Custody locked</div>
+                  {selected.disputed_escrow} CET
+                </div>
+                <div className="cell">
+                  <div className="k">Rebuttal filed</div>
+                  {selected.rebuttal_submitted ? "yes" : "no"}
+                </div>
+                <div className="cell">
+                  <div className="k">Response window</div>
+                  clock {selected.filed_at_clock} &rarr; {selected.rebuttal_deadline_clock}
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10 }}>
+                <span className={`approve-badge ${selected.claimant_approved_split ? "on" : ""}`}>
+                  Claimant {selected.claimant_approved_split ? "Approved" : "Pending"}
+                </span>{" "}
+                <span className={`approve-badge ${selected.respondent_approved_split ? "on" : ""}`}>
+                  Respondent {selected.respondent_approved_split ? "Approved" : "Pending"}
+                </span>
+                {selected.split_proposer && (
+                  <div className="muted small" style={{ marginTop: 6 }}>
+                    Proposed {selected.proposed_split_bps} bps by {selected.split_proposer}:
+                    {" "}
+                    {selected.settlement_proposal_note}
+                  </div>
+                )}
+              </div>
+
+              {isAdjudicable && isParty && wallet && (
+                <div className="row" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                  <input
+                    type="number"
+                    style={{ width: 110 }}
+                    value={splitForm.bps}
+                    onChange={(e) => setSplitForm({ ...splitForm, bps: Number(e.target.value) })}
+                    placeholder="bps"
+                  />
+                  <input
+                    style={{ flex: 1, minWidth: 160 }}
+                    value={splitForm.opinion}
+                    onChange={(e) => setSplitForm({ ...splitForm, opinion: e.target.value })}
+                    placeholder="settlement opinion note"
+                  />
+                  <button
+                    className="primary"
+                    disabled={busy}
+                    onClick={() =>
+                      runWrite("propose_deterministic_split", [selected.case_id, splitForm.bps, splitForm.opinion], {
+                        label: "Propose split",
+                      })
+                    }
+                  >
+                    Propose Split
+                  </button>
+                  {canCoSign && (
+                    <button
+                      className="gold"
+                      disabled={busy}
+                      onClick={() =>
+                        runWrite(
+                          "adjudicate_case_deterministic",
+                          [selected.case_id, selected.proposed_split_bps, splitForm.opinion],
+                          { label: "Co-authorize split" },
+                        )
+                      }
+                    >
+                      Co-authorize {selected.proposed_split_bps} bps
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {isAdjudicable && selected.status === "OPEN_FOR_REBUTTAL" && !selected.rebuttal_submitted && wallet && (
+                <div className="actions" style={{ marginTop: 8 }}>
+                  <button
+                    className="ghost"
+                    disabled={busy}
+                    onClick={() => runWrite("advance_tribunal_clock", [1], { label: "Advance clock" })}
+                  >
+                    Advance Tribunal Clock
+                  </button>
+                  <button
+                    className="ghost"
+                    disabled={busy}
+                    onClick={() => runWrite("expire_rebuttal_window", [selected.case_id], { label: "Expire window" })}
+                  >
+                    Expire Rebuttal Window
+                  </button>
+                </div>
+              )}
 
               <div className="actions">
                 {isRespondent && selected.status === "OPEN_FOR_REBUTTAL" && (
@@ -464,14 +586,14 @@ export default function App() {
                     {liveBusy ? "Adjudicating (full consensus)..." : (<><Radio size={13} className="btnicon" /> Trigger Live AI Adjudication</>)}
                   </button>
                 )}
-                {selected.status === "ADJUDICATED" && claimable > 0 && eq(selected.claimant, wallet!.address) && (
+                {isSettled && claimable > 0 && eq(selected.claimant, wallet!.address) && (
                   <button className="gold" disabled={busy} onClick={() => runWrite("withdraw_award", [], { label: "Withdraw award" })}>
-                    Withdraw {claimable}
+                    Withdraw {claimable} CET
                   </button>
                 )}
-                {selected.status === "ADJUDICATED" && claimable > 0 && eq(selected.respondent, wallet!.address) && (
+                {isSettled && claimable > 0 && eq(selected.respondent, wallet!.address) && (
                   <button className="gold" disabled={busy} onClick={() => runWrite("withdraw_award", [], { label: "Withdraw award" })}>
-                    Withdraw {claimable}
+                    Withdraw {claimable} CET
                   </button>
                 )}
                 {isClaimant && selected.status === "OPEN_FOR_REBUTTAL" && selected.amicus_count === 0 && (
@@ -644,13 +766,21 @@ export default function App() {
               <div className="meta-grid">
                 <div className="cell"><div className="k">Cases</div>{stats.total_cases}</div>
                 <div className="cell"><div className="k">Open</div>{stats.open_cases}</div>
-                <div className="cell"><div className="k">Adjudicated</div>{stats.adjudicated_cases}</div>
+                <div className="cell"><div className="k">Settled</div>{stats.adjudicated_cases}</div>
                 <div className="cell"><div className="k">Briefs</div>{stats.total_briefs}</div>
                 <div className="cell"><div className="k">Votes C/R</div>{stats.votes_for_claimant}/{stats.votes_for_respondent}</div>
                 <div className="cell"><div className="k">Escrow disputed</div>{stats.escrow_in_dispute}</div>
+                <div className="cell"><div className="k">Escrow vault (CET)</div>{stats.escrow_vault_balance}</div>
+                <div className="cell"><div className="k">Tribunal clock</div>{stats.tribunal_clock}</div>
               </div>
             ) : (
               <div className="muted">Connect a wallet.</div>
+            )}
+            {wallet && (
+              <div className="muted small" style={{ marginTop: 8 }}>
+                Your wallet: <span style={{ color: "var(--gold)" }}>{walletCet} CET</span> &middot;{" "}
+                claimable award <span style={{ color: "var(--gold)" }}>{claimable} CET</span>
+              </div>
             )}
           </section>
 

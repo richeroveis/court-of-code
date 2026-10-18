@@ -1,13 +1,13 @@
 """Live integration tests against the seeded CourtOfCode deployment on studionet.
 
 These read the consensus-finalized state through the real GenLayer RPC and assert the
-accounting invariants and seeded tribunal data. They are the on-chain counterpart to
-the direct-mode leader-path tests. Run with:
+custody, escrow-conservation and mutual-settlement invariants plus the seeded tribunal
+data. They are the on-chain counterpart to the direct-mode leader-path tests. Run with:
 
     gltest tests/test_court_of_code_integration.py -v -s
 
-The deployment address is taken from evidence/_checkpoint.json written by
-scripts/deploy_studionet.py.
+The deployment address and the throwaway signer addresses are taken from the evidence
+bundle written by scripts/deploy_studionet.py.
 """
 
 import json
@@ -21,6 +21,7 @@ from gltest.accounts import get_default_account
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKPOINT = ROOT / "evidence" / "_checkpoint.json"
+EVIDENCE = ROOT / "evidence" / "transactions.json"
 CONTRACT_NAME = "CourtOfCode"
 
 
@@ -31,6 +32,12 @@ def _address():
     if not addr:
         pytest.skip("checkpoint has no contract_address")
     return addr
+
+
+def _evidence():
+    if not EVIDENCE.exists():
+        pytest.skip("no evidence bundle found; run deploy_studionet.py first")
+    return json.loads(EVIDENCE.read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
@@ -60,13 +67,45 @@ def test_get_all_cases_returns_seeded_cases(deployed):
     assert 1 in ids and 2 in ids
 
 
-def test_adjudicated_case_conserves_escrow(deployed):
+def test_case_one_settled_by_mutual_authorization(deployed):
     contract, _ = deployed
     case1 = _read(contract, "get_case", [1])
-    assert case1["status"] == "ADJUDICATED"
+    # Requirement B: the split only settles when the counterparty co-signs.
+    assert case1["status"] == "SETTLED_MUTUAL"
+    assert case1["claimant_approved_split"] is True
+    assert case1["respondent_approved_split"] is True
     assert case1["verdict_label"] == "SPLIT_REMEDY"
     assert case1["claimant_award_bps"] == 6000
+
+
+def test_case_one_conserves_escrow(deployed):
+    contract, _ = deployed
+    case1 = _read(contract, "get_case", [1])
+    assert case1["disputed_escrow"] == 250000
+    assert case1["claimant_payout"] == 150000
+    assert case1["respondent_payout"] == 100000
     assert case1["claimant_payout"] + case1["respondent_payout"] == case1["disputed_escrow"]
+
+
+def test_custody_moved_into_claimant_wallet(deployed):
+    # Requirement A: the claimant withdrew 150000 CET out of the vault into their wallet.
+    contract, owner = deployed
+    wallet = int(_read(contract, "get_wallet_balance", [owner.address]))
+    claimable = int(_read(contract, "get_claimable_award", [owner.address]))
+    # 10000000 mint - 250000 case1 lock + 150000 withdrawn - 180000 case2 lock = 9720000.
+    assert claimable == 0
+    assert wallet >= 9720000
+
+
+def test_respondent_award_is_backed_by_the_vault(deployed):
+    contract, _ = deployed
+    ev = _evidence()
+    respondent = ev["respondent"]
+    resp_claimable = int(_read(contract, "get_claimable_award", [respondent]))
+    stats = _read(contract, "get_tribunal_stats")
+    assert resp_claimable == 100000
+    # The vault still holds the respondent's unclaimed award plus the open case 2 escrow.
+    assert int(stats["escrow_vault_balance"]) >= resp_claimable + 180000
 
 
 def test_second_case_still_open(deployed):
@@ -74,6 +113,9 @@ def test_second_case_still_open(deployed):
     case2 = _read(contract, "get_case", [2])
     assert case2["status"] == "OPEN_FOR_REBUTTAL"
     assert case2["disputed_escrow"] == 180000
+    # The live gate fields are recorded on-chain.
+    assert case2["rebuttal_submitted"] is False
+    assert case2["rebuttal_deadline_clock"] == case2["filed_at_clock"] + 3
 
 
 def test_briefs_recorded_for_case_one(deployed):
@@ -92,14 +134,16 @@ def test_tribunal_stats_match_seed(deployed):
     stats = _read(contract, "get_tribunal_stats")
     assert stats["total_cases"] >= 2
     assert stats["adjudicated_cases"] >= 1
-    assert stats["total_briefs"] >= 2
+    assert stats["total_briefs"] >= 3
     assert stats["votes_for_claimant"] >= 1
     assert stats["votes_for_respondent"] >= 1
+    assert stats["escrow_vault_balance"] >= 280000
 
 
 def test_juror_reputation_reflects_brief_and_upvote(deployed):
     contract, _ = deployed
-    juror1 = "0x9926c6407afb19b6349a9a68294e70b2ca3c4f29"
+    ev = _evidence()
+    juror1 = ev["juror1"].lower()
     # Reputation is a pure function of jury activity: +10 per brief authored and +3 per
     # upvote received on those briefs. Recompute it from live brief data so the assertion
     # holds as the public demo accumulates more activity beyond the original seed.
@@ -115,12 +159,3 @@ def test_juror_reputation_reflects_brief_and_upvote(deployed):
     reps = {r["juror"].lower(): r["reputation"] for r in board}
     assert authored >= 1 and expected > 0
     assert reps.get(juror1) == expected
-
-
-def test_split_awards_are_claimable(deployed):
-    contract, owner = deployed
-    claimant_award = _read(contract, "get_claimable_award", [owner.address])
-    assert int(claimant_award) == 150000  # 60% of 250000 escrow
-    respondent = "0xFF21Bc38046f8299544598C0e44C964A8E49E2C5"
-    resp_award = _read(contract, "get_claimable_award", [respondent])
-    assert int(resp_award) == 100000  # 40% of 250000 escrow

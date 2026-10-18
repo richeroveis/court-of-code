@@ -1,16 +1,16 @@
 {
   "network": "studionet",
   "chain_id": 61999,
-  "contract_address": "0x5049635f17E614f3BE0D3446af166DBC8E61c3eC",
+  "contract_address": "0xAEB9AF77E30eA8B1CDcEAF2E5e2dAb5F677A7899",
   "owner": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
-  "respondent": "0xFF21Bc38046f8299544598C0e44C964A8E49E2C5",
-  "juror1": "0x9926C6407aFB19B6349A9a68294e70b2ca3C4F29",
-  "juror2": "0xeAC48B961A8db86A5F9fC218b598712d10218f5c",
+  "respondent": "0x7b0440cB8F20bB5939AC050Baa5A050ae5686735",
+  "juror1": "0x73c75724d503ED5a64fCF53EA61BB7D96675a4Ef",
+  "juror2": "0x25C8c41257726bbfe21083b294Bf7F914e59cd55",
   "identity": {
-    "local_file_sha256": "7fafd77fae0d92121a04783c5b2adb9788bd8820df3bc1133ba4982713c55d74",
-    "submitted_code_sha256": "7fafd77fae0d92121a04783c5b2adb9788bd8820df3bc1133ba4982713c55d74",
-    "onchain_schema_sha256": "562f54ec29b461d5f39b9bf18a216caaa4ef2736bc094524f4691b9a6afec14b",
-    "source_derived_schema_sha256": "562f54ec29b461d5f39b9bf18a216caaa4ef2736bc094524f4691b9a6afec14b",
+    "local_file_sha256": "ddf24bcc4af71f1d508b4816ce15535029c8f8020165926203fb428aba5bd05d",
+    "submitted_code_sha256": "ddf24bcc4af71f1d508b4816ce15535029c8f8020165926203fb428aba5bd05d",
+    "onchain_schema_sha256": "169ca1d27c368d046c945b7b8b0cfc7ec208b0445a1a64e969dbfcc690f1204f",
+    "source_derived_schema_sha256": "169ca1d27c368d046c945b7b8b0cfc7ec208b0445a1a64e969dbfcc690f1204f",
     "file_matches_submitted_code": true,
     "onchain_matches_source": true
   },
@@ -19,30 +19,69 @@
     "case_id": 1,
     "case_title": "React Native offline cache bounty",
     "claimant": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+    "claimant_approved_split": true,
     "claimant_award_bps": 6000,
     "claimant_evidence_url": "https://github.com/nimbus-labs/mobile/pull/312",
     "claimant_payout": 150000,
     "contract_rubric": "Ship an offline-first cache layer, keep the public api, must pass the PR-312 suite",
     "disputed_escrow": 250000,
-    "judicial_opinion": "Deliverable substantially meets spec but a known regression remains; 60/40 split",
+    "filed_at_clock": 0,
+    "judicial_opinion": "Respondent co-authorizes the 60/40 split",
     "mandatory_spec_token": "PR-312",
+    "proposed_split_bps": 6000,
+    "rebuttal_deadline_clock": 3,
     "rebuttal_note": "Cache layer drops writes under airplane mode; the suite is not actually green",
-    "respondent": "0xFF21Bc38046f8299544598C0e44C964A8E49E2C5",
+    "rebuttal_submitted": true,
+    "respondent": "0x7b0440cB8F20bB5939AC050Baa5A050ae5686735",
+    "respondent_approved_split": true,
     "respondent_payout": 100000,
     "respondent_rebuttal_url": "https://github.com/nimbus-labs/mobile/pull/318",
-    "status": "ADJUDICATED",
+    "settlement_proposal_note": "Deliverable substantially meets spec; a known regression remains; 60/40 split",
+    "split_proposer": "CLAIMANT",
+    "status": "SETTLED_MUTUAL",
     "verdict_label": "SPLIT_REMEDY",
     "votes_for_claimant": 1,
     "votes_for_respondent": 1
+  },
+  "case_2": {
+    "amicus_count": 1,
+    "case_id": 2,
+    "case_title": "Rust telemetry pipeline bounty",
+    "claimant": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+    "claimant_approved_split": false,
+    "claimant_award_bps": 0,
+    "claimant_evidence_url": "https://github.com/nimbus-labs/telemetry/pull/9",
+    "claimant_payout": 0,
+    "contract_rubric": "Migrate the telemetry ingestion to rust, keep p99 latency under 40ms",
+    "disputed_escrow": 180000,
+    "filed_at_clock": 0,
+    "judicial_opinion": "",
+    "mandatory_spec_token": "RUST-9",
+    "proposed_split_bps": 0,
+    "rebuttal_deadline_clock": 3,
+    "rebuttal_note": "",
+    "rebuttal_submitted": false,
+    "respondent": "0x7b0440cB8F20bB5939AC050Baa5A050ae5686735",
+    "respondent_approved_split": false,
+    "respondent_payout": 0,
+    "respondent_rebuttal_url": "",
+    "settlement_proposal_note": "",
+    "split_proposer": "",
+    "status": "OPEN_FOR_REBUTTAL",
+    "verdict_label": "PENDING",
+    "votes_for_claimant": 1,
+    "votes_for_respondent": 0
   },
   "tribunal_stats": {
     "adjudicated_cases": 1,
     "cancelled_cases": 0,
     "escrow_in_dispute": 180000,
+    "escrow_vault_balance": 280000,
     "open_cases": 1,
-    "total_briefs": 2,
+    "total_briefs": 3,
     "total_cases": 2,
-    "votes_for_claimant": 1,
+    "tribunal_clock": 0,
+    "votes_for_claimant": 2,
     "votes_for_respondent": 1
   },
   "case_1_briefs": [
@@ -50,7 +89,7 @@
       "argument": "Reviewed the diff; the offline queue and rehydrate path both land and PR-312 is green on CI",
       "brief_id": 1,
       "case_id": 1,
-      "juror": "0x9926C6407aFB19B6349A9a68294e70b2ca3C4F29",
+      "juror": "0x73c75724d503ED5a64fCF53EA61BB7D96675a4Ef",
       "juror_handle": "auditcrew",
       "side": "SUPPORT_CLAIMANT",
       "upvotes": 1
@@ -59,7 +98,7 @@
       "argument": "Agree with the sponsor; the crash under airplane mode is a real regression, partial credit at best",
       "brief_id": 2,
       "case_id": 1,
-      "juror": "0xeAC48B961A8db86A5F9fC218b598712d10218f5c",
+      "juror": "0x25C8c41257726bbfe21083b294Bf7F914e59cd55",
       "juror_handle": "stableship",
       "side": "SUPPORT_RESPONDENT",
       "upvotes": 0
@@ -67,32 +106,26 @@
   ],
   "juror_leaderboard": [
     {
-      "juror": "0x9926C6407aFB19B6349A9a68294e70b2ca3C4F29",
-      "reputation": 13
+      "juror": "0x73c75724d503ED5a64fCF53EA61BB7D96675a4Ef",
+      "reputation": 26
     },
     {
-      "juror": "0xeAC48B961A8db86A5F9fC218b598712d10218f5c",
+      "juror": "0x25C8c41257726bbfe21083b294Bf7F914e59cd55",
       "reputation": 10
     }
   ],
-  "claimant_award": 150000,
+  "claimant_award": 0,
   "respondent_award": 100000,
+  "claimant_wallet": 9720000,
+  "respondent_wallet": 0,
   "transactions": [
     {
-      "detail": "case 1 open for rebuttal",
+      "detail": "case 1 open for rebuttal, 250000 CET locked into custody",
       "execution_result": "SUCCESS",
       "method": "file_dispute_case",
       "status_name": "FINALIZED",
       "step": "file_case_1",
-      "tx_hash": "0xd87b9f3175e53c8e273ea9f654de10c00694f5c9a67afd3d34732f6d8974978a"
-    },
-    {
-      "detail": "case 2 open for rebuttal",
-      "execution_result": "SUCCESS",
-      "method": "file_dispute_case",
-      "status_name": "FINALIZED",
-      "step": "file_case_2",
-      "tx_hash": "0xc5a197669465d1f68669a30e10c7fd1d43ad7b7db928c94a556a4a32e20beaaf"
+      "tx_hash": "0x45d3f3a593633ef5a5810898ff663020d4fbf702a6015a4ea91b880f70a065c4"
     },
     {
       "detail": "case 1 -> READY_FOR_TRIAL",
@@ -100,7 +133,7 @@
       "method": "submit_respondent_rebuttal",
       "status_name": "FINALIZED",
       "step": "submit_rebuttal",
-      "tx_hash": "0x3fc0b058de86710a05570daa229b9117cb6f04e8a77f55b92d9ba3e65c4c0ecc"
+      "tx_hash": "0x89c87c9a771d89d0ec54f614a25d05b70773bd0f21e5f25c4d3a56e9a27f8e71"
     },
     {
       "detail": "juror1 supports claimant",
@@ -108,15 +141,79 @@
       "method": "file_amicus_brief",
       "status_name": "FINALIZED",
       "step": "brief_claimant",
-      "tx_hash": "0xeace785a60dc02f20373cad1de9dba245e0857af8d85d443cecc1d873396a8fc"
+      "tx_hash": "0x61dd521e830dc3e8c433aa3d47a61f2d588f3fec6f64376e122a2c31cb5f6a7d"
     },
     {
-      "detail": "juror1 holds no award; withdrawal reverts and applies no state change",
-      "execution_result": "ERROR",
+      "detail": "juror2 supports respondent",
+      "execution_result": "SUCCESS",
+      "method": "file_amicus_brief",
+      "status_name": "FINALIZED",
+      "step": "brief_respondent",
+      "tx_hash": "0x877b64af617369378eb4f020cc6c377426b3b2b59fe26187e5059f1d38fd36be"
+    },
+    {
+      "detail": "brief 1 upvoted by juror2",
+      "execution_result": "SUCCESS",
+      "method": "upvote_amicus_brief",
+      "status_name": "FINALIZED",
+      "step": "upvote_brief",
+      "tx_hash": "0x2353cabf8cb53967bf69146c8956537699249e5171f77df2febf866fe463e9a0"
+    },
+    {
+      "detail": "claimant proposes 6000 bps on case 1",
+      "execution_result": "SUCCESS",
+      "method": "propose_deterministic_split",
+      "status_name": "FINALIZED",
+      "step": "propose_split",
+      "tx_hash": "0x4b20ea1ce4bd8d6a0029340fda14d8341d93eae89c948d1a1b4a781688990a2f"
+    },
+    {
+      "detail": "case 1 -> SETTLED_MUTUAL 6000 bps (150000/100000)",
+      "execution_result": "SUCCESS",
+      "method": "adjudicate_case_deterministic",
+      "status_name": "FINALIZED",
+      "step": "cosign_settle",
+      "tx_hash": "0x38a9e83a696e6a48c6aab88b6d4a0dd9f2ac9df987478cd3caa4aff8639efb04"
+    },
+    {
+      "detail": "claimant withdraws 150000 CET from vault into wallet",
+      "execution_result": "SUCCESS",
       "method": "withdraw_award",
       "status_name": "FINALIZED",
-      "step": "expected_rollback",
-      "tx_hash": "0x53e39cdb25f55e638c3e7658ccc14bce4538b2992dd57c054f15fab1342434f1"
+      "step": "withdraw_claimant",
+      "tx_hash": "0xd4941f2f2226ea3050a7c6ed2242ce7cde149c1ea49a44394b63a056e9c4e782"
+    },
+    {
+      "detail": "case 2 open for rebuttal, 180000 CET locked into custody",
+      "execution_result": "SUCCESS",
+      "method": "file_dispute_case",
+      "status_name": "FINALIZED",
+      "step": "file_case_2",
+      "tx_hash": "0xf5620e77722cc5e045b74ab7b0fe3e99ceed388c05123a16a3e52628e5c6a897"
+    },
+    {
+      "detail": "juror1 briefs case 2",
+      "execution_result": "SUCCESS",
+      "method": "file_amicus_brief",
+      "status_name": "FINALIZED",
+      "step": "brief_case2",
+      "tx_hash": "0xdd54818b7c84cc1e576ac50f6a57347bd6c11895d7b5848890d1b25f2cdba498"
+    },
+    {
+      "detail": "no proposal exists on case 2; the co-signature path reverts",
+      "execution_result": "ERROR",
+      "method": "adjudicate_case_deterministic",
+      "status_name": "FINALIZED",
+      "step": "rollback_unilateral_split",
+      "tx_hash": "0xacf36471f5bfbc8a1d09fe2b69af0ff3244f2f29b6eb2ae7617376c211a14466"
+    },
+    {
+      "detail": "case 2 still inside its rebuttal window; live adjudication is gated off",
+      "execution_result": "ERROR",
+      "method": "adjudicate_case_live",
+      "status_name": "FINALIZED",
+      "step": "rollback_premature_live",
+      "tx_hash": "0x1cf1c8c3d644aab0ece24ecaf8f5199d3e2590b92cdf309c139b335576cc06c1"
     }
   ]
 }

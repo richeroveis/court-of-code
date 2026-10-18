@@ -244,42 +244,42 @@ def main():
     def _status(cid):
         return _read(contract_owner, "get_case", [cid])["status"]
 
+    def _case(cid):
+        return _read(contract_owner, "get_case", [cid])
+
     def _counters():
         st = _read(contract_owner, "get_tribunal_stats")
         return st["total_cases"], st["votes_for_claimant"], st["votes_for_respondent"]
 
-    def _brief_upvotes(bid):
-        for b in _read(contract_owner, "get_case_briefs", [1]):
+    def _wallet(addr):
+        return int(_read(contract_owner, "get_wallet_balance", [addr]))
+
+    def _brief_upvotes(cid, bid):
+        for b in _read(contract_owner, "get_case_briefs", [cid]):
             if b["brief_id"] == bid:
                 return b["upvotes"]
         return -1
 
-    # 1. File two realistic open-source bounty dispute cases (claimant = owner).
+    # --- Case 1: full two-party mutual settlement backed by real CET custody. ---
     run_step(
         "file_case_1", "file_dispute_case",
         [respondent.address, "React Native offline cache bounty",
          "Ship an offline-first cache layer, keep the public api, must pass the PR-312 suite",
          "PR-312", "https://github.com/nimbus-labs/mobile/pull/312", 250000],
-        owner, detail="case 1 open for rebuttal", verify=lambda: _counters()[0] >= 1,
-    )
-    run_step(
-        "file_case_2", "file_dispute_case",
-        [respondent.address, "Rust telemetry pipeline bounty",
-         "Migrate the telemetry ingestion to rust, keep p99 latency under 40ms",
-         "RUST-9", "https://github.com/nimbus-labs/telemetry/pull/9", 180000],
-        owner, detail="case 2 open for rebuttal", verify=lambda: _counters()[0] >= 2,
+        owner, detail="case 1 open for rebuttal, 250000 CET locked into custody",
+        verify=lambda: _counters()[0] >= 1,
     )
 
-    # 2. Respondent submits a rebuttal on case 1 (transitions to READY_FOR_TRIAL).
+    # Respondent rebuts, opening the trial path.
     run_step(
         "submit_rebuttal", "submit_respondent_rebuttal",
         [1, "https://github.com/nimbus-labs/mobile/pull/318",
          "Cache layer drops writes under airplane mode; the suite is not actually green"],
         respondent, detail="case 1 -> READY_FOR_TRIAL",
-        verify=lambda: _status(1) != "OPEN_FOR_REBUTTAL",
+        verify=lambda: _case(1)["rebuttal_submitted"] is True,
     )
 
-    # 3. Two community jurors file amicus briefs on case 1.
+    # Two community jurors file amicus briefs on case 1, then a cross-upvote.
     run_step(
         "brief_claimant", "file_amicus_brief",
         [1, "auditcrew", "SUPPORT_CLAIMANT",
@@ -292,37 +292,79 @@ def main():
          "Agree with the sponsor; the crash under airplane mode is a real regression, partial credit at best"],
         juror2, detail="juror2 supports respondent", verify=lambda: _counters()[2] >= 1,
     )
-
-    # 4. juror2 upvotes juror1's brief (cross-upvote, not a self-upvote).
     run_step(
         "upvote_brief", "upvote_amicus_brief",
         [1], juror2, detail="brief 1 upvoted by juror2",
-        verify=lambda: _brief_upvotes(1) >= 1,
+        verify=lambda: _brief_upvotes(1, 1) >= 1,
     )
 
-    # 5. Adjudicate case 1 with a proportional split award (owner deterministic path).
+    # Two-party mutual deterministic split: claimant proposes 6000, respondent co-signs.
     run_step(
-        "adjudicate_case_1", "adjudicate_case_deterministic",
-        [1, 6000, "Deliverable substantially meets spec but a known regression remains; 60/40 split"],
-        owner, detail="case 1 -> ADJUDICATED 6000 bps",
-        verify=lambda: _status(1) == "ADJUDICATED",
+        "propose_split", "propose_deterministic_split",
+        [1, 6000, "Deliverable substantially meets spec; a known regression remains; 60/40 split"],
+        owner, detail="claimant proposes 6000 bps on case 1",
+        verify=lambda: _case(1)["split_proposer"] == "CLAIMANT",
     )
-
-    # 6. Expected rollback: withdrawing a party with no award must revert.
     run_step(
-        "expected_rollback", "withdraw_award",
-        [], juror1, expect_success=False,
-        detail="juror1 holds no award; withdrawal reverts and applies no state change",
+        "cosign_settle", "adjudicate_case_deterministic",
+        [1, 6000, "Respondent co-authorizes the 60/40 split"],
+        respondent, detail="case 1 -> SETTLED_MUTUAL 6000 bps (150000/100000)",
+        verify=lambda: _status(1) == "SETTLED_MUTUAL",
+    )
+    # Claimant moves 150000 CET out of the vault into their own wallet.
+    run_step(
+        "withdraw_claimant", "withdraw_award",
+        [], owner, detail="claimant withdraws 150000 CET from vault into wallet",
+        verify=lambda: _wallet(owner.address) >= 9900000,
     )
 
-    # Read back state and verify the escrow-conservation invariant live.
+    # --- Case 2: an open showcase plus two adversarial rollbacks that must revert. ---
+    run_step(
+        "file_case_2", "file_dispute_case",
+        [respondent.address, "Rust telemetry pipeline bounty",
+         "Migrate the telemetry ingestion to rust, keep p99 latency under 40ms",
+         "RUST-9", "https://github.com/nimbus-labs/telemetry/pull/9", 180000],
+        owner, detail="case 2 open for rebuttal, 180000 CET locked into custody",
+        verify=lambda: _counters()[0] >= 2,
+    )
+    run_step(
+        "brief_case2", "file_amicus_brief",
+        [2, "auditcrew", "SUPPORT_CLAIMANT",
+         "The rust pipeline preserves p99 under load in the reviewer's benchmark"],
+        juror1, detail="juror1 briefs case 2",
+        verify=lambda: len(_read(contract_owner, "get_case_briefs", [2])) >= 1,
+    )
+    run_step(
+        "upvote_case2", "upvote_amicus_brief",
+        [3], juror2, detail="juror2 upvotes the case 2 brief (brief id 3)",
+        verify=lambda: _brief_upvotes(2, 3) >= 1,
+    )
+
+    # Expected rollback A: unilateral deterministic settlement with no split proposal.
+    run_step(
+        "rollback_unilateral_split", "adjudicate_case_deterministic",
+        [2, 5000, "attempted unilateral settlement"],
+        respondent, expect_success=False,
+        detail="no proposal exists on case 2; the co-signature path reverts",
+    )
+    # Expected rollback B: premature live adjudication before rebuttal or deadline.
+    run_step(
+        "rollback_premature_live", "adjudicate_case_live",
+        [2], owner, expect_success=False,
+        detail="case 2 still inside its rebuttal window; live adjudication is gated off",
+    )
+
+    # Read back state and verify the custody + escrow-conservation invariants live.
     print("--- verifying on-chain state ---")
     case1 = _read(contract_owner, "get_case", [1])
+    case2 = _read(contract_owner, "get_case", [2])
     stats = _read(contract_owner, "get_tribunal_stats")
     briefs = _read(contract_owner, "get_case_briefs", [1])
     leaderboard = _read(contract_owner, "get_juror_leaderboard")
     claimant_award = _read(contract_owner, "get_claimable_award", [owner.address])
     respondent_award = _read(contract_owner, "get_claimable_award", [respondent.address])
+    claimant_wallet = _read(contract_owner, "get_wallet_balance", [owner.address])
+    respondent_wallet = _read(contract_owner, "get_wallet_balance", [respondent.address])
 
     conserved = case1["claimant_payout"] + case1["respondent_payout"] == case1["disputed_escrow"]
     print(f"case 1 status={case1['status']} verdict={case1['verdict_label']} "
@@ -330,16 +372,31 @@ def main():
           f"conserved={conserved}")
     if not conserved:
         raise RuntimeError("ESCROW CONSERVATION VIOLATED on-chain")
-    if case1["status"] != "ADJUDICATED":
-        raise RuntimeError("case 1 not adjudicated on-chain")
+    if case1["status"] != "SETTLED_MUTUAL":
+        raise RuntimeError("case 1 was not settled by mutual authorization on-chain")
     if len(briefs) != 2:
-        raise RuntimeError(f"expected 2 briefs, got {len(briefs)}")
+        raise RuntimeError(f"expected 2 briefs on case 1, got {len(briefs)}")
 
-    # Rollback verification: juror1 must still have zero claimable award.
+    # Custody proof: the claimant withdrew exactly 150000 CET from the vault into the wallet.
+    # 10000000 initial mint - 250000 case 1 lock + 150000 withdrawn - 180000 case 2 lock = 9720000.
+    if int(claimant_wallet) != 9720000:
+        raise RuntimeError(f"claimant wallet custody mismatch: {claimant_wallet}")
+    if int(claimant_award) != 0:
+        raise RuntimeError("claimant award was not cleared on withdrawal")
+    if int(respondent_award) != 100000:
+        raise RuntimeError(
+            f"respondent award should stay claimable at 100000, got {respondent_award}"
+        )
+
+    # Case 2 must remain open: both adversarial rollbacks reverted with no state change.
+    if case2["status"] != "OPEN_FOR_REBUTTAL":
+        raise RuntimeError("case 2 should still be open after the gated rollbacks")
     juror1_award = _read(contract_owner, "get_claimable_award", [juror1.address])
-    print(f"juror1 claimable after rollback attempt (must be 0): {juror1_award}")
-    if juror1_award != 0:
+    print(f"juror1 claimable after rollback attempts (must be 0): {juror1_award}")
+    if int(juror1_award) != 0:
         raise RuntimeError("rollback step unexpectedly moved funds")
+    vault = int(stats["escrow_vault_balance"])
+    print(f"escrow vault balance after custody flows: {vault}")
 
     # 3-way sha256 identity proof.
     print("--- verifying source identity (sha256) ---")
@@ -395,11 +452,14 @@ def main():
         "juror2": juror2.address,
         "identity": identity,
         "case_1": case1,
+        "case_2": case2,
         "tribunal_stats": stats,
         "case_1_briefs": briefs,
         "juror_leaderboard": leaderboard,
         "claimant_award": claimant_award,
         "respondent_award": respondent_award,
+        "claimant_wallet": claimant_wallet,
+        "respondent_wallet": respondent_wallet,
         "transactions": ckpt["txs"],
     }
     TXLOG_PATH.write_text(json.dumps(evidence, indent=2, default=str), encoding="utf-8")

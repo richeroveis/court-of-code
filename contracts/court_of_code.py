@@ -31,6 +31,16 @@ class DisputeCase:
     respondent_payout: u256
     verdict_label: str
     judicial_opinion: str
+    # Two-party mutual settlement proposal (Requirement B)
+    proposed_split_bps: u256
+    split_proposer: str
+    settlement_proposal_note: str
+    claimant_approved_split: bool
+    respondent_approved_split: bool
+    # On-chain rebuttal window / response deadline (Requirement C)
+    filed_at_clock: u256
+    rebuttal_deadline_clock: u256
+    rebuttal_submitted: bool
 
 
 @allow_storage
@@ -50,7 +60,13 @@ class AmicusBrief:
 # ---------------------------------------------------------------------------
 
 VALID_SIDES = ("SUPPORT_CLAIMANT", "SUPPORT_RESPONDENT", "NEUTRAL_TECHNICAL")
+# Statuses in which the jury may still weigh in.
 OPEN_STATUSES = ("OPEN_FOR_REBUTTAL", "READY_FOR_TRIAL")
+# Statuses from which a case may still be resolved (jury open plus the expired window).
+ADJUDICABLE_STATUSES = ("OPEN_FOR_REBUTTAL", "READY_FOR_TRIAL", "REBUTTAL_DEADLINE_PASSED")
+# Terminal settlement statuses.
+SETTLED_STATUSES = ("ADJUDICATED", "SETTLED_MUTUAL", "CANCELLED")
+REBUTTAL_WINDOW_STEPS = 3
 
 
 def _is_address(value: str) -> bool:
@@ -86,8 +102,10 @@ def _is_valid_evidence_url(url: str, min_len: int, max_len: int) -> bool:
 
 
 def _sanitize_evidence(raw) -> str:
-    """Normalize untrusted fetched text: strip control chars, defuse closing
-    delimiter tags, and hard-truncate. Deterministic so all validators agree."""
+    """Normalize untrusted text: strip control chars, defuse closing delimiter
+    tags, and hard-truncate. Deterministic so all validators agree. Applied to
+    fetched evidence AND to party-authored prompt fields (title, rubric, spec
+    token) so no hostile input can close the untrusted delimiter early."""
     text = str(raw)
     kept: list = []
     for ch in text:
@@ -95,7 +113,7 @@ def _sanitize_evidence(raw) -> str:
         if code == 10 or code == 13 or code == 9 or code >= 32:
             kept.append(ch)
     clean = "".join(kept)
-    # Defuse any attempt by fetched content to close our untrusted delimiter early.
+    # Defuse any attempt by content to close our untrusted delimiter early.
     clean = clean.replace("</untrusted", "< /untrusted")
     if len(clean) > 5000:
         clean = clean[:5000]
@@ -164,11 +182,62 @@ class CourtOfCode(gl.Contract):
     juror_reputation: TreeMap[Address, u256]
     has_voted_case: TreeMap[str, bool]
     has_upvoted_brief: TreeMap[str, bool]
+    # Tribunal Escrow Token (CET) custody ledger (Requirement A)
+    token_balances: TreeMap[Address, u256]
+    escrow_vault_balance: u256
+    has_claimed_faucet: TreeMap[Address, bool]
+    # Monotonic on-chain tribunal clock used for the response deadline (Requirement C)
+    tribunal_clock: u256
 
     def __init__(self):
         self.owner = gl.message.sender_address
         self.case_counter = u256(0)
         self.brief_counter = u256(0)
+        self.escrow_vault_balance = u256(0)
+        self.tribunal_clock = u256(0)
+        # Mint the initial CET supply to the deployer so the tribunal has a
+        # transferable token economy; custody is later enforced 1:1 in the vault.
+        self.token_balances[self.owner] = u256(10000000)
+
+    # -- token custody -----------------------------------------------------
+
+    @gl.public.write
+    def claim_faucet_tokens(self) -> u256:
+        sender = gl.message.sender_address
+        if self.has_claimed_faucet.get(sender, False):
+            raise gl.vm.UserError("[EXPECTED] faucet already claimed")
+        self.has_claimed_faucet[sender] = True
+        self.token_balances[sender] = (
+            self.token_balances.get(sender, u256(0)) + u256(500000)
+        )
+        return self.token_balances[sender]
+
+    @gl.public.write
+    def fund_account(self, recipient: str, amount: u256) -> u256:
+        sender = gl.message.sender_address
+        if sender != self.owner:
+            raise gl.vm.UserError("[EXPECTED] only owner may fund an account")
+        if not _is_address(recipient):
+            raise gl.vm.UserError("[EXPECTED] recipient is not a valid address")
+        if amount < u256(1) or amount > u256(10000000):
+            raise gl.vm.UserError("[EXPECTED] amount must be 1..10000000")
+        addr = Address(recipient)
+        self.token_balances[addr] = self.token_balances.get(addr, u256(0)) + amount
+        return self.token_balances[addr]
+
+    @gl.public.write
+    def transfer_tokens(self, recipient: str, amount: u256) -> u256:
+        sender = gl.message.sender_address
+        if not _is_address(recipient):
+            raise gl.vm.UserError("[EXPECTED] recipient is not a valid address")
+        if amount < u256(1):
+            raise gl.vm.UserError("[EXPECTED] transfer amount must be positive")
+        if self.token_balances.get(sender, u256(0)) < amount:
+            raise gl.vm.UserError("[EXPECTED] insufficient token balance")
+        self.token_balances[sender] = self.token_balances.get(sender, u256(0)) - amount
+        addr = Address(recipient)
+        self.token_balances[addr] = self.token_balances.get(addr, u256(0)) + amount
+        return self.token_balances[addr]
 
     # -- filing ------------------------------------------------------------
 
@@ -204,6 +273,25 @@ class CourtOfCode(gl.Contract):
         if disputed_escrow < u256(100) or disputed_escrow > u256(10000000):
             raise gl.vm.UserError("[EXPECTED] disputed_escrow must be 100..10000000")
 
+        # Onboarding faucet for first-time filers whose balance cannot cover the
+        # escrow, so a fresh burner wallet can lock real CET into custody.
+        if (
+            not self.has_claimed_faucet.get(claimant, False)
+            and self.token_balances.get(claimant, u256(0)) < disputed_escrow
+        ):
+            self.has_claimed_faucet[claimant] = True
+            self.token_balances[claimant] = (
+                self.token_balances.get(claimant, u256(0)) + u256(500000)
+            )
+
+        # Lock real custody: debit the claimant wallet and credit the vault.
+        if self.token_balances.get(claimant, u256(0)) < disputed_escrow:
+            raise gl.vm.UserError("[EXPECTED] insufficient CET balance for escrow custody")
+        self.token_balances[claimant] = (
+            self.token_balances.get(claimant, u256(0)) - disputed_escrow
+        )
+        self.escrow_vault_balance = self.escrow_vault_balance + disputed_escrow
+
         self.case_counter = self.case_counter + u256(1)
         new_id = self.case_counter
 
@@ -227,6 +315,14 @@ class CourtOfCode(gl.Contract):
             respondent_payout=u256(0),
             verdict_label="PENDING",
             judicial_opinion="",
+            proposed_split_bps=u256(0),
+            split_proposer="",
+            settlement_proposal_note="",
+            claimant_approved_split=False,
+            respondent_approved_split=False,
+            filed_at_clock=self.tribunal_clock,
+            rebuttal_deadline_clock=self.tribunal_clock + u256(REBUTTAL_WINDOW_STEPS),
+            rebuttal_submitted=False,
         )
         return new_id
 
@@ -253,8 +349,31 @@ class CourtOfCode(gl.Contract):
 
         case.respondent_rebuttal_url = respondent_rebuttal_url
         case.rebuttal_note = rebuttal_note
+        case.rebuttal_submitted = True
         case.status = "READY_FOR_TRIAL"
         self.cases[case_id] = case
+
+    # -- on-chain response deadline (Requirement C) ------------------------
+
+    @gl.public.write
+    def advance_tribunal_clock(self, steps: u256) -> u256:
+        if steps < u256(1) or steps > u256(50):
+            raise gl.vm.UserError("[EXPECTED] steps must be 1..50")
+        self.tribunal_clock = self.tribunal_clock + steps
+        return self.tribunal_clock
+
+    @gl.public.write
+    def expire_rebuttal_window(self, case_id: u256) -> str:
+        if case_id not in self.cases:
+            raise gl.vm.UserError("[EXPECTED] case not found")
+        case = self.cases[case_id]
+        if case.status != "OPEN_FOR_REBUTTAL" or case.rebuttal_submitted:
+            return case.status
+        if self.tribunal_clock < case.rebuttal_deadline_clock:
+            raise gl.vm.UserError("[EXPECTED] rebuttal response deadline has not passed yet")
+        case.status = "REBUTTAL_DEADLINE_PASSED"
+        self.cases[case_id] = case
+        return case.status
 
     # -- jury participation ------------------------------------------------
 
@@ -329,6 +448,34 @@ class CourtOfCode(gl.Contract):
         )
         return brief.upvotes
 
+    # -- internal settlement helper ---------------------------------------
+
+    def _settle_case_split(
+        self, case: DisputeCase, bps: u256, opinion: str, settlement_status: str
+    ) -> None:
+        """Credit the escrow-conserving split into per-party claimable awards.
+
+        The funds stay locked 1:1 inside the on-chain escrow vault until each party
+        calls withdraw_award, which is what moves custody into a wallet balance.
+        """
+        escrow = case.disputed_escrow
+        claimant_payout = (escrow * bps) // u256(10000)
+        respondent_payout = escrow - claimant_payout
+
+        self.claimable_awards[case.claimant] = (
+            self.claimable_awards.get(case.claimant, u256(0)) + claimant_payout
+        )
+        self.claimable_awards[case.respondent] = (
+            self.claimable_awards.get(case.respondent, u256(0)) + respondent_payout
+        )
+
+        case.claimant_award_bps = bps
+        case.claimant_payout = claimant_payout
+        case.respondent_payout = respondent_payout
+        case.judicial_opinion = opinion
+        case.verdict_label = _verdict_label(bps)
+        case.status = settlement_status
+
     # -- live AI adjudication ---------------------------------------------
 
     @gl.public.write
@@ -336,16 +483,26 @@ class CourtOfCode(gl.Contract):
         if case_id not in self.cases:
             raise gl.vm.UserError("[EXPECTED] case not found")
         case = self.cases[case_id]
-        if case.status not in OPEN_STATUSES:
+        if case.status not in ADJUDICABLE_STATUSES:
             raise gl.vm.UserError("[EXPECTED] case not adjudicable")
 
+        # STRICT GATE: only after the respondent rebutted OR the on-chain response
+        # deadline expired. Never while the rebuttal window is still open.
+        if case.rebuttal_submitted == False and self.tribunal_clock < case.rebuttal_deadline_clock:
+            raise gl.vm.UserError(
+                "[EXPECTED] live adjudication blocked: awaiting respondent rebuttal "
+                "or response deadline expiry"
+            )
+
         # Snapshot every field the settlement math needs before the nondet block.
+        # Party-authored title/rubric/spec-token are sanitized here so a hostile
+        # claimant cannot inject prompt delimiters through them (Finding C4).
         claimant = case.claimant
         respondent = case.respondent
         escrow = case.disputed_escrow
-        spec_token = case.mandatory_spec_token
-        rubric = case.contract_rubric
-        title = case.case_title
+        spec_token = _sanitize_evidence(case.mandatory_spec_token)
+        rubric = _sanitize_evidence(case.contract_rubric)
+        title = _sanitize_evidence(case.case_title)
         claimant_url = case.claimant_evidence_url
         respondent_url = case.respondent_rebuttal_url
 
@@ -401,41 +558,27 @@ class CourtOfCode(gl.Contract):
         if verdict["spec_token_found"] is False and bps > u256(5000):
             bps = u256(5000)
 
-        claimant_payout = (escrow * bps) // u256(10000)
-        respondent_payout = escrow - claimant_payout
-
-        self.claimable_awards[claimant] = (
-            self.claimable_awards.get(claimant, u256(0)) + claimant_payout
-        )
-        self.claimable_awards[respondent] = (
-            self.claimable_awards.get(respondent, u256(0)) + respondent_payout
-        )
-
-        case.claimant_award_bps = bps
-        case.claimant_payout = claimant_payout
-        case.respondent_payout = respondent_payout
-        case.judicial_opinion = str(verdict["opinion"])
-        case.verdict_label = _verdict_label(bps)
-        case.status = "ADJUDICATED"
+        self._settle_case_split(case, bps, str(verdict["opinion"]), "ADJUDICATED")
         self.cases[case_id] = case
         return case.verdict_label
 
-    # -- deterministic adjudication ---------------------------------------
+    # -- deterministic, two-party mutual settlement -----------------------
 
     @gl.public.write
-    def adjudicate_case_deterministic(
+    def propose_deterministic_split(
         self, case_id: u256, claimant_award_bps: u256, opinion: str
-    ) -> str:
+    ) -> None:
         if case_id not in self.cases:
             raise gl.vm.UserError("[EXPECTED] case not found")
         case = self.cases[case_id]
-        if case.status not in OPEN_STATUSES:
-            raise gl.vm.UserError("[EXPECTED] case not adjudicable")
+        if case.status not in ADJUDICABLE_STATUSES:
+            raise gl.vm.UserError("[EXPECTED] case not open for a split proposal")
 
         sender = gl.message.sender_address
-        is_party = sender == case.claimant or sender == case.respondent
-        if sender != self.owner and not is_party:
-            raise gl.vm.UserError("[EXPECTED] owner or party only")
+        if sender != case.claimant and sender != case.respondent:
+            raise gl.vm.UserError(
+                "[EXPECTED] only claimant or respondent may propose a deterministic split"
+            )
 
         # Reject, do not clamp.
         if claimant_award_bps > u256(10000):
@@ -443,24 +586,62 @@ class CourtOfCode(gl.Contract):
         if len(opinion) > 400:
             raise gl.vm.UserError("[EXPECTED] opinion exceeds 400 chars")
 
-        escrow = case.disputed_escrow
-        bps = claimant_award_bps
-        claimant_payout = (escrow * bps) // u256(10000)
-        respondent_payout = escrow - claimant_payout
+        case.proposed_split_bps = claimant_award_bps
+        case.settlement_proposal_note = opinion
+        if sender == case.claimant:
+            case.split_proposer = "CLAIMANT"
+            case.claimant_approved_split = True
+            case.respondent_approved_split = False
+        else:
+            case.split_proposer = "RESPONDENT"
+            case.respondent_approved_split = True
+            case.claimant_approved_split = False
+        self.cases[case_id] = case
 
-        self.claimable_awards[case.claimant] = (
-            self.claimable_awards.get(case.claimant, u256(0)) + claimant_payout
-        )
-        self.claimable_awards[case.respondent] = (
-            self.claimable_awards.get(case.respondent, u256(0)) + respondent_payout
-        )
+    @gl.public.write
+    def adjudicate_case_deterministic(
+        self, case_id: u256, agreed_claimant_award_bps: u256, opinion: str
+    ) -> str:
+        """Finalize a deterministic split only when the counterparty co-signs.
 
-        case.claimant_award_bps = bps
-        case.claimant_payout = claimant_payout
-        case.respondent_payout = respondent_payout
-        case.judicial_opinion = opinion
-        case.verdict_label = _verdict_label(bps)
-        case.status = "ADJUDICATED"
+        A split proposal must already exist, the caller must be the counterparty of
+        the proposer, and the agreed bps must equal the proposed bps exactly.
+        """
+        if case_id not in self.cases:
+            raise gl.vm.UserError("[EXPECTED] case not found")
+        case = self.cases[case_id]
+        if case.status not in ADJUDICABLE_STATUSES:
+            raise gl.vm.UserError("[EXPECTED] case not adjudicable")
+        if case.split_proposer != "CLAIMANT" and case.split_proposer != "RESPONDENT":
+            raise gl.vm.UserError("[EXPECTED] no deterministic split has been proposed")
+
+        if agreed_claimant_award_bps > u256(10000):
+            raise gl.vm.UserError("[EXPECTED] claimant_award_bps exceeds 10000")
+        if agreed_claimant_award_bps != case.proposed_split_bps:
+            raise gl.vm.UserError("[EXPECTED] agreed bps does not match the proposed split")
+        if len(opinion) > 400:
+            raise gl.vm.UserError("[EXPECTED] opinion exceeds 400 chars")
+
+        sender = gl.message.sender_address
+        if case.split_proposer == "CLAIMANT":
+            if sender != case.respondent:
+                raise gl.vm.UserError(
+                    "[EXPECTED] only respondent may co-authorize the claimant split"
+                )
+            case.respondent_approved_split = True
+        else:
+            if sender != case.claimant:
+                raise gl.vm.UserError(
+                    "[EXPECTED] only claimant may co-authorize the respondent split"
+                )
+            case.claimant_approved_split = True
+
+        if not (case.claimant_approved_split and case.respondent_approved_split):
+            raise gl.vm.UserError("[EXPECTED] both parties must authorize the split")
+
+        self._settle_case_split(
+            case, agreed_claimant_award_bps, opinion, "SETTLED_MUTUAL"
+        )
         self.cases[case_id] = case
         return case.verdict_label
 
@@ -472,7 +653,11 @@ class CourtOfCode(gl.Contract):
         amount = self.claimable_awards.get(sender, u256(0))
         if amount == u256(0):
             raise gl.vm.UserError("[EXPECTED] no award to withdraw")
+        if self.escrow_vault_balance < amount:
+            raise gl.vm.UserError("[EXPECTED] escrow vault cannot cover this award")
         self.claimable_awards[sender] = u256(0)
+        self.escrow_vault_balance = self.escrow_vault_balance - amount
+        self.token_balances[sender] = self.token_balances.get(sender, u256(0)) + amount
         return amount
 
     @gl.public.write
@@ -489,8 +674,10 @@ class CourtOfCode(gl.Contract):
             raise gl.vm.UserError("[EXPECTED] cannot cancel once jurors have filed")
 
         case.status = "CANCELLED"
-        self.claimable_awards[case.claimant] = (
-            self.claimable_awards.get(case.claimant, u256(0)) + case.disputed_escrow
+        # Refund the locked custody straight back to the claimant wallet.
+        self.escrow_vault_balance = self.escrow_vault_balance - case.disputed_escrow
+        self.token_balances[case.claimant] = (
+            self.token_balances.get(case.claimant, u256(0)) + case.disputed_escrow
         )
         self.cases[case_id] = case
 
@@ -526,6 +713,12 @@ class CourtOfCode(gl.Contract):
         return self.claimable_awards.get(Address(account), u256(0))
 
     @gl.public.view
+    def get_wallet_balance(self, account: str) -> u256:
+        if not _is_address(account):
+            raise gl.vm.UserError("[EXPECTED] invalid address")
+        return self.token_balances.get(Address(account), u256(0))
+
+    @gl.public.view
     def get_juror_leaderboard(self) -> list:
         rows: list = []
         for juror in self.juror_reputation.keys():
@@ -552,10 +745,11 @@ class CourtOfCode(gl.Contract):
             total = total + u256(1)
             votes_claimant = votes_claimant + case.votes_for_claimant
             votes_respondent = votes_respondent + case.votes_for_respondent
-            if case.status == "ADJUDICATED":
-                adjudicated = adjudicated + u256(1)
-            elif case.status == "CANCELLED":
-                cancelled = cancelled + u256(1)
+            if case.status in SETTLED_STATUSES:
+                if case.status == "CANCELLED":
+                    cancelled = cancelled + u256(1)
+                else:
+                    adjudicated = adjudicated + u256(1)
             else:
                 open_count = open_count + u256(1)
                 escrow_locked = escrow_locked + case.disputed_escrow
@@ -568,6 +762,8 @@ class CourtOfCode(gl.Contract):
             "votes_for_claimant": int(votes_claimant),
             "votes_for_respondent": int(votes_respondent),
             "escrow_in_dispute": int(escrow_locked),
+            "escrow_vault_balance": int(self.escrow_vault_balance),
+            "tribunal_clock": int(self.tribunal_clock),
         }
 
 
@@ -597,6 +793,14 @@ def _case_to_dict(case: DisputeCase) -> dict:
         "respondent_payout": int(case.respondent_payout),
         "verdict_label": case.verdict_label,
         "judicial_opinion": case.judicial_opinion,
+        "proposed_split_bps": int(case.proposed_split_bps),
+        "split_proposer": case.split_proposer,
+        "settlement_proposal_note": case.settlement_proposal_note,
+        "claimant_approved_split": case.claimant_approved_split,
+        "respondent_approved_split": case.respondent_approved_split,
+        "filed_at_clock": int(case.filed_at_clock),
+        "rebuttal_deadline_clock": int(case.rebuttal_deadline_clock),
+        "rebuttal_submitted": case.rebuttal_submitted,
     }
 
 

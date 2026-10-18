@@ -6,7 +6,7 @@ import {
 import { studionet } from "genlayer-js/chains";
 
 // Deployed CourtOfCode tribunal on studionet (chain 61999).
-export const DEFAULT_CONTRACT = "0x5049635f17E614f3BE0D3446af166DBC8E61c3eC";
+export const DEFAULT_CONTRACT = "0xAEB9AF77E30eA8B1CDcEAF2E5e2dAb5F677A7899";
 export const STUDIONET_RPC = "https://studio.genlayer.com/api";
 
 const CONTRACT_KEY = "courtofcode.contract";
@@ -153,4 +153,48 @@ function receiptSucceeded(receipt: ReceiptLike): boolean {
   if (!Array.isArray(leaders) || leaders.length === 0) return false;
   const leader = leaders[0] as ReceiptLike;
   return leader.execution_result === "SUCCESS" || leader.executionResult === "SUCCESS";
+}
+
+// ---------------------------------------------------------------------------
+// Typed client calls for the custody, two-party settlement and deadline flow.
+// ---------------------------------------------------------------------------
+
+export function getWalletBalance(wallet: WalletState, account: string): Promise<number> {
+  return readContract<number>(wallet, "get_wallet_balance", [account]);
+}
+
+export function claimFaucetTokens(wallet: WalletState): Promise<WriteResult> {
+  return writeContract(wallet, "claim_faucet_tokens", []);
+}
+
+export function proposeDeterministicSplit(
+  wallet: WalletState,
+  caseId: number,
+  bps: number,
+  opinion: string,
+): Promise<WriteResult> {
+  return writeContract(wallet, "propose_deterministic_split", [caseId, bps, opinion]);
+}
+
+export function acceptDeterministicSplit(
+  wallet: WalletState,
+  caseId: number,
+  bps: number,
+  opinion: string,
+): Promise<WriteResult> {
+  return writeContract(wallet, "adjudicate_case_deterministic", [caseId, bps, opinion]);
+}
+
+export function advanceTribunalClock(
+  wallet: WalletState,
+  steps: number,
+): Promise<WriteResult> {
+  return writeContract(wallet, "advance_tribunal_clock", [steps]);
+}
+
+export function expireRebuttalWindow(
+  wallet: WalletState,
+  caseId: number,
+): Promise<WriteResult> {
+  return writeContract(wallet, "expire_rebuttal_window", [caseId]);
 }

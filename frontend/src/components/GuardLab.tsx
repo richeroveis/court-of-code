@@ -44,6 +44,18 @@ const GUARDS: Guard[] = [
     fn: "withdraw_award",
     args: () => [],
   },
+  {
+    id: "premature-live",
+    label: "Premature live adjudication before rebuttal or response deadline (case #2)",
+    fn: "adjudicate_case_live",
+    args: () => [2],
+  },
+  {
+    id: "unilateral-split",
+    label: "Unilateral deterministic split without counterparty co-signature (case #2)",
+    fn: "adjudicate_case_deterministic",
+    args: () => [2, 5000, "attempted unilateral settlement"],
+  },
 ];
 
 type Result = { state: "idle" | "running" | "pass" | "fail"; note: string };
