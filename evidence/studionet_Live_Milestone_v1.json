@@ -3,25 +3,25 @@
   "network": "studionet",
   "rpc": "https://rpc.testnet-chain.genlayer.com",
   "chain_id": 61999,
-  "contract_address": "0xC68d7c51FCDD67cCdcD951747C4CE8A8744f415d",
-  "deploy_tx": "0x39d10a453202a4696c06018a9dd89468d346aa5ed7357bf3f20e9ecd8d15a63b",
+  "contract_address": "0xD53816C72a715f317eA689916693308e8f701039",
+  "deploy_tx": "0x223a1206928ca031dae09173e149519e536301c10fcdd366c63bb92aa8dd7d87",
   "owner": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
-  "respondent": "0xd65ed67c9afE82d58a9C765CC54584B3B5630123",
-  "juror": "0x17f6d64Fa75B8814A3534efFe6849bA6Db7616C9",
+  "respondent": "0x43510ecaFDDcc7eB7EAE56b61cE8E41e1018344F",
+  "juror": "0xa1e4165856f64c94d8efB9e87B97A738cDA0bf56",
   "identity": {
-    "local_file_sha256": "d5500b11d4a0055d733b61fe5702a8b202b9511ade8b74c946cb5e339f0d2a7e",
-    "submitted_code_sha256": "d5500b11d4a0055d733b61fe5702a8b202b9511ade8b74c946cb5e339f0d2a7e",
+    "local_file_sha256": "b34716ce8c34a41d5d671d6062395290da52a016051f66cd8b649ec30d4cddb1",
+    "submitted_code_sha256": "b34716ce8c34a41d5d671d6062395290da52a016051f66cd8b649ec30d4cddb1",
     "onchain_schema_sha256": "303f09025ed12cef6a00a008f8e81fe4d179f8f6eba3fa4517428b6fd1ed3412",
     "source_derived_schema_sha256": "303f09025ed12cef6a00a008f8e81fe4d179f8f6eba3fa4517428b6fd1ed3412",
     "file_matches_submitted_code": true,
     "onchain_matches_source": true
   },
-  "settlement_note": "The live adjudicate_docket transaction FINALIZED and returned a decree, but the hosted studio did not commit the nondeterministic prompt_comparative state delta to canonical storage, so on-chain settlement could not be driven from it. Every deterministic write (fund, file, rebuttal, amicus, soft-fail refund, claim) persisted with real hashes; full decree settlement and escrow conservation are proven by the 66 direct-mode consensus-bound tests.",
+  "settlement_note": "The live adjudicate_docket transaction FINALIZED and returned a decree, but the hosted studio did not commit the nondeterministic prompt_comparative state delta to canonical storage, so on-chain settlement could not be driven from it. Every deterministic write (fund, file, rebuttal, amicus, soft-fail refund, claim) persisted with real hashes; full decree settlement and escrow conservation are proven by the 70 direct-mode consensus-bound tests.",
   "docket_M1_final": {
-    "adjudication_timeout_epoch": 1801253520,
+    "adjudication_timeout_epoch": 1801258514,
     "amicus_count": 1,
     "appeal_challenged": false,
-    "appeal_deadline_epoch": 1793477520,
+    "appeal_deadline_epoch": 1793482514,
     "brief_summary": "Claimant shipped the offline cache and PR-312 is green; sponsor withheld the bounty",
     "challenge_bond_cet": 0,
     "claimant": "0x154a452b0755EE812014C1405B15D905BA06f9c7",
@@ -30,15 +30,15 @@
     "derived_respondent_refund": 2000000,
     "derived_slash_amount": 0,
     "docket_id": "M1",
-    "filing_epoch": 1793476920,
+    "filing_epoch": 1793481914,
     "judicial_opinion": "",
     "mandatory_spec_token": "PR-312",
     "pr_evidence_url": "https://github.com/nimbus-labs/mobile/pull/312",
     "principal_cet": 2000000,
     "quantized_spec_baseline_bps": 0,
-    "rebuttal_deadline_epoch": 1793477220,
+    "rebuttal_deadline_epoch": 1793482214,
     "rebuttal_submitted": true,
-    "respondent": "0xd65ed67c9afE82d58a9C765CC54584B3B5630123",
+    "respondent": "0x43510ecaFDDcc7eB7EAE56b61cE8E41e1018344F",
     "respondent_bond_cet": 300000,
     "respondent_rebuttal": "The offline queue drops writes under airplane mode; the suite is not actually green",
     "settled": false,
@@ -74,7 +74,7 @@
       "argument": "Reviewed the diff; the rehydrate path lands and PR-312 passes on CI",
       "brief_id": 1,
       "docket_id": "M1",
-      "juror": "0x17f6d64Fa75B8814A3534efFe6849bA6Db7616C9",
+      "juror": "0xa1e4165856f64c94d8efB9e87B97A738cDA0bf56",
       "juror_handle": "auditcrew",
       "side": "SUPPORT_CLAIMANT",
       "upvotes": 0
@@ -82,122 +82,122 @@
   ],
   "judicial_leaderboard": [
     {
-      "juror": "0x17f6d64Fa75B8814A3534efFe6849bA6Db7616C9",
+      "juror": "0xa1e4165856f64c94d8efB9e87B97A738cDA0bf56",
       "reputation": 10
     }
   ],
   "transactions": [
     {
-      "detail": "owner CET custody minted",
-      "execution_result": "SUCCESS",
+      "step": "fund_cet_vault",
       "method": "fund_cet_vault_payable",
+      "tx_hash": "0xcd16337f74322aa58a4d78bfdd81d9f896e5eafb21d231b4e9bef10643409b97",
+      "status_name": "FINALIZED",
+      "execution_result": "SUCCESS",
       "return_value": {
+        "status": "return",
         "payload": {
           "readable": "\"CET_FUNDED\""
-        },
-        "status": "return"
+        }
       },
-      "status_name": "FINALIZED",
-      "step": "fund_cet_vault",
-      "tx_hash": "0xb563afbd4de29c9f15ec895331909942ede5158e9d586dce8f9d503f038bc3db"
+      "detail": "owner CET custody minted"
     },
     {
-      "detail": "docket M1 open",
-      "execution_result": "SUCCESS",
+      "step": "file_M1",
       "method": "file_dispute_payable",
+      "tx_hash": "0x824a237adea42996ade9f07a052d6f8f5500357df4f03a1c7a6a1b0f80fab1d5",
+      "status_name": "FINALIZED",
+      "execution_result": "SUCCESS",
       "return_value": {
+        "status": "return",
         "payload": {
           "readable": "\"FILED:M1\""
-        },
-        "status": "return"
+        }
       },
-      "status_name": "FINALIZED",
-      "step": "file_M1",
-      "tx_hash": "0xf00b544b67fca3442f3f4f4cdd40d599b7b48f32df71cb646ee7dd4d39e31def"
+      "detail": "docket M1 open"
     },
     {
-      "detail": "docket M2 open",
-      "execution_result": "SUCCESS",
+      "step": "file_M2",
       "method": "file_dispute_payable",
+      "tx_hash": "0xd9490626bbe442f18de46a59ff680e8330d5fc1a34e12a1a59d2564e9e03a717",
+      "status_name": "FINALIZED",
+      "execution_result": "SUCCESS",
       "return_value": {
+        "status": "return",
         "payload": {
           "readable": "\"FILED:M2\""
-        },
-        "status": "return"
+        }
       },
-      "status_name": "FINALIZED",
-      "step": "file_M2",
-      "tx_hash": "0x3aaa1f7ee392e2abb5c1b47dcdac1ae81eb042f0f58e2e5688a7976c119044e7"
+      "detail": "docket M2 open"
     },
     {
-      "detail": "M1 -> READY_FOR_TRIAL",
-      "execution_result": "SUCCESS",
+      "step": "rebuttal_M1",
       "method": "post_respondent_bond_payable",
+      "tx_hash": "0xc743e08f4de79108a8ab60ff83fa8dd2d13cf54a732078e3f378cae60798e0b3",
+      "status_name": "FINALIZED",
+      "execution_result": "SUCCESS",
       "return_value": {
+        "status": "return",
         "payload": {
           "readable": "\"REBUTTAL_POSTED:M1\""
-        },
-        "status": "return"
+        }
       },
-      "status_name": "FINALIZED",
-      "step": "rebuttal_M1",
-      "tx_hash": "0xa153b845f59bff6a3c14b49790c3c224b5480328091f262d72364291bba92641"
+      "detail": "M1 -> READY_FOR_TRIAL"
     },
     {
-      "detail": "juror supports claimant",
-      "execution_result": "SUCCESS",
+      "step": "amicus_M1",
       "method": "file_amicus_brief",
+      "tx_hash": "0xe65438d288d5eaa6b7dc5e86b3cbdb0cadd2ad04b63b07d42376606f8bc656a5",
+      "status_name": "FINALIZED",
+      "execution_result": "SUCCESS",
       "return_value": {
+        "status": "return",
         "payload": {
           "readable": "1"
-        },
-        "status": "return"
+        }
       },
-      "status_name": "FINALIZED",
-      "step": "amicus_M1",
-      "tx_hash": "0x449ee24c20e6d738eea62370afe70d2cd14bbf869c8a39ebcda55d36dc53ef39"
+      "detail": "juror supports claimant"
     },
     {
-      "detail": "soft-fail credited refundable custody",
-      "execution_result": "SUCCESS",
+      "step": "softfail_M1",
       "method": "file_dispute_payable",
+      "tx_hash": "0xd12f16f8ef692fd777c31836f39b8f70b5804bae1a52f1f20409dfb4f53a47d9",
+      "status_name": "FINALIZED",
+      "execution_result": "SUCCESS",
       "return_value": {
+        "status": "return",
         "payload": {
           "readable": "\"SOFT_FAIL_REFUND_CREDITED:DUPLICATE_DOCKET_ID\""
-        },
-        "status": "return"
+        }
       },
-      "status_name": "FINALIZED",
-      "step": "softfail_M1",
-      "tx_hash": "0xf12eae041d60e574920613ff25ac692746b6afe6d0a61549edcd7dce63e54fbf"
+      "detail": "soft-fail credited refundable custody"
     },
     {
-      "detail": "owner claims GEN back via contract_interface emit_transfer",
-      "execution_result": "SUCCESS",
+      "step": "claim_refund",
       "method": "claim_refundable_balance",
+      "tx_hash": "0x23a654164e3bb53c4e50fc880244ae3e265bac0a4420a78d579085b99ab96fd5",
+      "status_name": "FINALIZED",
+      "execution_result": "SUCCESS",
       "return_value": {
+        "status": "return",
         "payload": {
           "readable": "2500000"
-        },
-        "status": "return"
+        }
       },
-      "status_name": "FINALIZED",
-      "step": "claim_refund",
-      "tx_hash": "0xe4bb7eee5c633c8e705e2796a9b98af605efc017d23405ceed5d93eeb5331843"
+      "detail": "owner claims GEN back via contract_interface emit_transfer"
     },
     {
-      "detail": "M1 adjudicated via validator consensus",
-      "execution_result": "SUCCESS",
-      "method": "adjudicate_docket",
-      "return_value": {
-        "payload": {
-          "readable": "\"RESPONDENT_SUMMARY_DISMISSAL\""
-        },
-        "status": "return"
-      },
-      "status_name": "FINALIZED",
       "step": "adjudicate_M1",
-      "tx_hash": "0xa4abb30b66c1ed160f612ded3e03979b9b3d60e10e3cb13a1f5fbdc97c179b6e"
+      "method": "adjudicate_docket",
+      "tx_hash": "0xdd6fad248ad3c966ca759e0d2566e9eb253faf204d81a41ebe2c35f8ff678a7c",
+      "status_name": "FINALIZED",
+      "execution_result": "SUCCESS",
+      "return_value": {
+        "status": "return",
+        "payload": {
+          "readable": "\"FULL_CLAIMANT_DECREE\""
+        }
+      },
+      "detail": "M1 adjudicated via validator consensus"
     }
   ]
 }

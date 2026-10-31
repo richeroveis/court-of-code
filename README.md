@@ -27,14 +27,14 @@ non-trapping payable refund pattern.
 
 | Field | Value |
 | --- | --- |
-| Address | `0xC68d7c51FCDD67cCdcD951747C4CE8A8744f415d` |
+| Address | `0xD53816C72a715f317eA689916693308e8f701039` |
 | Network | studionet (chain 61999) |
 | Deployer account | `0x154a452b0755EE812014C1405B15D905BA06f9c7` |
 | Pinned runner | `py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6` (GenVM v0.2.16) |
-| Contract size | 37,038 bytes (under the 37,500 byte cap) |
+| Contract size | 36,486 bytes (LF-normalized deployed source, under the 37,500 byte cap) |
 | Release tag | `milestone-v1` (upgrade of `studionet-v1`) |
 
-Deploy transaction hash: `0x39d10a453202a4696c06018a9dd89468d346aa5ed7357bf3f20e9ecd8d15a63b`.
+Deploy transaction hash: `0x223a1206928ca031dae09173e149519e536301c10fcdd366c63bb92aa8dd7d87`.
 
 ## Live studionet lifecycle (Milestone v1)
 
@@ -43,15 +43,15 @@ Transaction hashes (view them at `https://genlayer-explorer.vercel.app/tx/<hash>
 
 | Step | Result | Transaction hash |
 | --- | --- | --- |
-| Deploy | FINALIZED | `0x39d10a453202a4696c06018a9dd89468d346aa5ed7357bf3f20e9ecd8d15a63b` |
-| fund_cet_vault_payable | FINALIZED SUCCESS | `0xb563afbd4de29c9f15ec895331909942ede5158e9d586dce8f9d503f038bc3db` |
-| file_dispute_payable M1 | FINALIZED SUCCESS | `0xf00b544b67fca3442f3f4f4cdd40d599b7b48f32df71cb646ee7dd4d39e31def` |
-| file_dispute_payable M2 | FINALIZED SUCCESS | `0x3aaa1f7ee392e2abb5c1b47dcdac1ae81eb042f0f58e2e5688a7976c119044e7` |
-| post_respondent_bond_payable M1 | FINALIZED SUCCESS | `0xa153b845f59bff6a3c14b49790c3c224b5480328091f262d72364291bba92641` |
-| file_amicus_brief M1 | FINALIZED SUCCESS | `0x449ee24c20e6d738eea62370afe70d2cd14bbf869c8a39ebcda55d36dc53ef39` |
-| soft-fail duplicate filing M1 | FINALIZED SUCCESS | `0xf12eae041d60e574920613ff25ac692746b6afe6d0a61549edcd7dce63e54fbf` |
-| claim_refundable_balance | FINALIZED SUCCESS | `0xe4bb7eee5c633c8e705e2796a9b98af605efc017d23405ceed5d93eeb5331843` |
-| adjudicate_docket M1 (live consensus) | FINALIZED SUCCESS | `0xa4abb30b66c1ed160f612ded3e03979b9b3d60e10e3cb13a1f5fbdc97c179b6e` |
+| Deploy | FINALIZED | `0x223a1206928ca031dae09173e149519e536301c10fcdd366c63bb92aa8dd7d87` |
+| fund_cet_vault_payable | FINALIZED SUCCESS | `0xcd16337f74322aa58a4d78bfdd81d9f896e5eafb21d231b4e9bef10643409b97` |
+| file_dispute_payable M1 | FINALIZED SUCCESS | `0x824a237adea42996ade9f07a052d6f8f5500357df4f03a1c7a6a1b0f80fab1d5` |
+| file_dispute_payable M2 | FINALIZED SUCCESS | `0xd9490626bbe442f18de46a59ff680e8330d5fc1a34e12a1a59d2564e9e03a717` |
+| post_respondent_bond_payable M1 | FINALIZED SUCCESS | `0xc743e08f4de79108a8ab60ff83fa8dd2d13cf54a732078e3f378cae60798e0b3` |
+| file_amicus_brief M1 | FINALIZED SUCCESS | `0xe65438d288d5eaa6b7dc5e86b3cbdb0cadd2ad04b63b07d42376606f8bc656a5` |
+| soft-fail duplicate filing M1 | FINALIZED SUCCESS | `0xd12f16f8ef692fd777c31836f39b8f70b5804bae1a52f1f20409dfb4f53a47d9` |
+| claim_refundable_balance | FINALIZED SUCCESS | `0x23a654164e3bb53c4e50fc880244ae3e265bac0a4420a78d579085b99ab96fd5` |
+| adjudicate_docket M1 (live consensus) | FINALIZED SUCCESS | `0xdd6fad248ad3c966ca759e0d2566e9eb253faf204d81a41ebe2c35f8ff678a7c` |
 
 After the run the on-chain custody accounting read back as: `vault_custody_balance` 3,800,000
 CET (both principals plus the respondent bond), `native_escrow_balance` 2,000,000 (the two
@@ -67,7 +67,7 @@ result without committing its post-consensus state delta to canonical storage, s
 different bands, confirming the validators did not durably agree). This is a limitation of the
 hosted studio consensus path, not of the contract: every deterministic transition persisted
 with a real hash, and the full consensus-bound settlement, the discrete-ladder binding, the
-escrow conservation and the timeout and contested void refunds are all proven by the 66 passing
+escrow conservation and the timeout and contested void refunds are all proven by the 70 passing
 direct-mode tests. No deterministic settlement backdoor was added to force an on-chain payout.
 
 ## The eleven Steward rules
@@ -154,7 +154,7 @@ npm run build    # production build to frontend/dist
 
 ```
 genvm-lint check contracts/court_of_code.py                 # 0 errors
-gltest tests/test_court_of_code_direct.py                   # 66 tests, leader path
+gltest tests/test_court_of_code_direct.py                   # 70 tests, leader path
 gltest tests/test_court_of_code_integration.py -v -s        # live studionet reads
 ```
 

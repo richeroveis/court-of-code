@@ -4,7 +4,6 @@ from genlayer import *
 from dataclasses import dataclass
 import datetime as _dt
 
-# Awards are discrete labels validators must reproduce (Rule 4/9).
 AWARD_LADDER = (0, 2500, 5000, 7500, 10000)
 BASELINE_GRID = 500
 BPS_MAX = 10000
@@ -39,6 +38,7 @@ class Docket:
     principal_cet: u256
     respondent_bond_cet: u256
     challenge_bond_cet: u256
+    filing_bond_native: u256
     filing_epoch: u256
     rebuttal_deadline_epoch: u256
     appeal_deadline_epoch: u256
@@ -73,8 +73,8 @@ class AmicusBrief:
     upvotes: u256
 
 
-# Rule 3: native GEN released to an EOA is an external chain-layer message, so it
-# uses the EVM contract interface, never get_contract_at on the intelligent layer.
+# Rule 3: native GEN to an EOA is a chain-layer message, so it uses the EVM
+# contract interface, never get_contract_at on the intelligent layer.
 @gl.evm.contract_interface
 class _GENRecipient:
     class View:
@@ -113,8 +113,7 @@ def _is_valid_url(url: str, min_len: int, max_len: int) -> bool:
 
 
 def _sanitize_text(raw) -> str:
-    # Rule 6: drop control chars, defuse closing delimiter tags, truncate. Pure and
-    # deterministic so every validator reproduces the identical bytes.
+    # Rule 6: drop control chars, defuse closing delimiter tags, truncate deterministically.
     kept: list = []
     for ch in str(raw):
         code = ord(ch)
@@ -127,9 +126,8 @@ def _sanitize_text(raw) -> str:
 
 
 def _now_epoch() -> int:
-    # Rule 2: deadlines read the deterministic GenVM inclusion timestamp only; there
-    # is no manual advance_clock. On chain the runner binds datetime.now() to the
-    # block time every validator agreed on, which equals gl.message_raw['datetime'].
+    # Rule 2: deadlines use the deterministic GenVM inclusion timestamp only; no
+    # advance_clock. On chain datetime.now() binds to the agreed block time.
     return int(_dt.datetime.now(_dt.timezone.utc).timestamp())
 
 
@@ -290,6 +288,7 @@ class CourtOfCode(gl.Contract):
             title=title, pr_evidence_url=pr_evidence_url, spec_reference_url=spec_reference_url,
             brief_summary=brief_summary, mandatory_spec_token=mandatory_spec_token,
             principal_cet=principal_cet, respondent_bond_cet=u256(0), challenge_bond_cet=u256(0),
+            filing_bond_native=bond,
             filing_epoch=u256(now),
             rebuttal_deadline_epoch=u256(now + rebuttal_seconds),
             appeal_deadline_epoch=u256(now + rebuttal_seconds + appeal_seconds),
@@ -424,10 +423,10 @@ class CourtOfCode(gl.Contract):
         if d.status not in OPEN_STATUSES:
             raise gl.vm.UserError("[EXPECTED] docket not adjudicable")
         now = _now_epoch()
-        # Rule 6: adjudicate only after rebuttal submission OR full rebuttal expiry.
+        # Rule 6: adjudicate only after respondent rebuttal OR full rebuttal expiry.
         if not d.rebuttal_submitted and now < int(d.rebuttal_deadline_epoch):
             raise gl.vm.UserError("[EXPECTED] rebuttal window still open")
-        # Rule 4: snapshot everything the math needs BEFORE entering nondet.
+        # Rule 4: snapshot the math inputs into locals BEFORE nondet.
         respondent = d.respondent
         principal = int(d.principal_cet)
         respondent_bond = int(d.respondent_bond_cet)
@@ -488,8 +487,7 @@ class CourtOfCode(gl.Contract):
             raise gl.vm.UserError("[EXPECTED] respondent refund consensus mismatch")
         if int(verdict["derived_slash_amount"]) != check_slash:
             raise gl.vm.UserError("[EXPECTED] slash consensus mismatch")
-        # Re-read the docket fresh after the nondeterministic consensus block before
-        # mutating; a storage handle captured before a nondet block may not commit.
+        # Re-read fresh after the nondet block; a pre-nondet storage handle may not commit.
         d = self.dockets[docket_id]
         d.verdict_band = band
         d.quantized_spec_baseline_bps = u256(baseline)
@@ -545,18 +543,27 @@ class CourtOfCode(gl.Contract):
         refund = int(state["respondent_refund"])
         slash = int(state["slash_amount"])
         bond = int(d.respondent_bond_cet)
-        # Escrow-conserving: the un-slashed respondent bond always returns to the
-        # respondent, so claimant + respondent credits re-sum to principal + bond.
+        # Escrow-conserving: the un-slashed respondent bond always returns, so the
+        # two credits re-sum to principal + bond.
         self.claimable_awards[claimant] = self.claimable_awards.get(claimant, u256(0)) + u256(payout + slash)
         self.claimable_awards[d.respondent] = self.claimable_awards.get(d.respondent, u256(0)) + u256(refund + (bond - slash))
         self.vault_custody_balance = self.vault_custody_balance - d.principal_cet - d.respondent_bond_cet
+        self._release_filing_bond(claimant, d.filing_bond_native)
         d.settled = True
         d.status = "FINALIZED"
         self.dockets[docket_id] = d
         return "SETTLED:" + str(state["verdict_band"])
 
+    def _release_filing_bond(self, claimant, amount) -> None:
+        # Rule 10: the filer's native deposit is never trapped; refund it at every exit.
+        if amount > u256(0):
+            self.refundable_balances[claimant] = self.refundable_balances.get(claimant, u256(0)) + amount
+            self.total_refundable_custody = self.total_refundable_custody + amount
+            self.native_escrow_balance = self.native_escrow_balance - amount
+
     def _void_and_refund(self, docket_id: str, d: Docket, reason: str) -> str:
         # Rule 10: zero-winner / contested timeout refunds 100% of principal + bonds.
+        self._release_filing_bond(d.claimant, d.filing_bond_native)
         self.claimable_awards[d.claimant] = self.claimable_awards.get(d.claimant, u256(0)) + d.principal_cet
         self.claimable_awards[d.respondent] = (
             self.claimable_awards.get(d.respondent, u256(0)) + d.respondent_bond_cet + d.challenge_bond_cet
@@ -645,6 +652,7 @@ class CourtOfCode(gl.Contract):
             raise gl.vm.UserError("[EXPECTED] cannot cancel once jurors have filed")
         self.vault_custody_balance = self.vault_custody_balance - d.principal_cet
         self.token_balances[d.claimant] = self.token_balances.get(d.claimant, u256(0)) + d.principal_cet
+        self._release_filing_bond(d.claimant, d.filing_bond_native)
         d.status = "CANCELLED"
         d.settled = True
         self.dockets[docket_id] = d
@@ -659,8 +667,7 @@ class CourtOfCode(gl.Contract):
         return "PAUSED" if paused else "RESUMED"
 
     def _compute_docket_state(self, d: Docket) -> dict:
-        # Rule 5: one invariant helper shared by every view and settlement so status
-        # labels and payout numbers never diverge.
+        # Rule 5: one invariant helper shared by views, leaderboard and settlement.
         award = int(d.claimant_award_bps)
         principal = int(d.principal_cet)
         bond = int(d.respondent_bond_cet)

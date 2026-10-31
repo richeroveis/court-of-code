@@ -6,7 +6,7 @@ import {
 import { studionet } from "genlayer-js/chains";
 
 // Deployed CourtOfCode Chancery v1 on studionet (chain 61999).
-export const DEFAULT_CONTRACT = "0xC68d7c51FCDD67cCdcD951747C4CE8A8744f415d";
+export const DEFAULT_CONTRACT = "0xD53816C72a715f317eA689916693308e8f701039";
 export const STUDIONET_RPC = "https://studio.genlayer.com/api";
 
 const CONTRACT_KEY = "courtofcode.contract";

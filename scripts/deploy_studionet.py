@@ -372,7 +372,7 @@ def main():
             "canonical storage, so on-chain settlement could not be driven from it. Every "
             "deterministic write (fund, file, rebuttal, amicus, soft-fail refund, claim) persisted "
             "with real hashes; full decree settlement and escrow conservation are proven by the "
-            "66 direct-mode consensus-bound tests."
+            "70 direct-mode consensus-bound tests."
         )
         print("  NOTE: " + settlement_note)
 

@@ -622,6 +622,66 @@ def test_withdraw_award_zero_reverts(direct_vm, direct_deploy, direct_charlie):
 
 
 # ---------------------------------------------------------------------------
+# H2. Filing bond is never trapped (Rule 10 non-trapping deposit return)
+# ---------------------------------------------------------------------------
+
+
+def _filed_with_deposit(vm, c, alice, bob, deposit=3000, award=7500, bond=4000):
+    _fund(vm, c, alice, 500000)
+    _file(vm, c, alice, bob, principal=10000, bond=deposit)
+    _rebut(vm, c, bob, bond=bond)
+    _mock_evidence(vm)
+    _mock_award(vm, award, baseline=8000)
+    c.adjudicate_docket("D1")
+
+
+def test_filing_deposit_refunded_on_settlement(direct_vm, direct_deploy, direct_alice, direct_bob):
+    c = _deploy(direct_vm, direct_deploy, direct_alice)
+    _filed_with_deposit(direct_vm, c, direct_alice, direct_bob, deposit=3000)
+    assert c.get_custody_accounting_summary()["native_escrow_balance"] == 3000
+    direct_vm.warp(_iso(T0 + 7201))
+    c.execute_decree_settlement("D1")
+    assert c.get_refundable_balance(_hex(direct_alice)) == 3000
+    assert c.get_custody_accounting_summary()["native_escrow_balance"] == 0
+    assert c.get_custody_accounting_summary()["total_refundable_custody"] == 3000
+
+
+def test_filing_deposit_refunded_on_contested_void(direct_vm, direct_deploy, direct_alice, direct_bob):
+    c = _deploy(direct_vm, direct_deploy, direct_alice)
+    _filed_with_deposit(direct_vm, c, direct_alice, direct_bob, deposit=2500)
+    direct_vm.sender = direct_alice
+    direct_vm.value = 2000
+    direct_vm.warp(_iso(T0 + 600))
+    c.challenge_verdict_payable("D1")
+    direct_vm.warp(_iso(T0 + 7201))
+    assert c.execute_decree_settlement("D1").startswith("VOID:")
+    assert c.get_refundable_balance(_hex(direct_alice)) == 2500
+    assert c.get_custody_accounting_summary()["native_escrow_balance"] == 0
+
+
+def test_filing_deposit_refunded_on_expired_void(direct_vm, direct_deploy, direct_alice, direct_bob):
+    c = _deploy(direct_vm, direct_deploy, direct_alice)
+    _fund(direct_vm, c, direct_alice, 500000)
+    _file(direct_vm, c, direct_alice, direct_bob, principal=10000, bond=1800)
+    direct_vm.warp(_iso(T0 + 3600 + 3600 + 7776001))
+    assert c.claim_expired_or_uncontested_refund("D1").startswith("VOID:")
+    assert c.get_refundable_balance(_hex(direct_alice)) == 1800
+    assert c.get_custody_accounting_summary()["native_escrow_balance"] == 0
+
+
+def test_filing_deposit_refunded_on_cancel(direct_vm, direct_deploy, direct_alice, direct_bob):
+    c = _deploy(direct_vm, direct_deploy, direct_alice)
+    _fund(direct_vm, c, direct_alice, 500000)
+    _file(direct_vm, c, direct_alice, direct_bob, principal=10000, bond=1200)
+    direct_vm.sender = direct_alice
+    direct_vm.value = 0
+    direct_vm.warp(_iso(T0 + 60))
+    assert c.cancel_docket("D1") == "CANCELLED:D1"
+    assert c.get_refundable_balance(_hex(direct_alice)) == 1200
+    assert c.get_custody_accounting_summary()["native_escrow_balance"] == 0
+
+
+# ---------------------------------------------------------------------------
 # I. Challenge / appeal + contested void (Rule 10)
 # ---------------------------------------------------------------------------
 

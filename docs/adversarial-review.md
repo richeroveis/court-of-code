@@ -4,7 +4,7 @@ Every finding below was produced by attacking `contracts/court_of_code.py` as if
 caller, juror, party and every byte of externally fetched evidence were hostile, and as if
 the contract custodied real value. Each item is marked FIXED with the direct-mode test that
 proves it, or OPEN with a stated reason. All findings are checked with
-`gltest tests/test_court_of_code_direct.py` (66 passing, leader path). Validator agreement
+`gltest tests/test_court_of_code_direct.py` (70 passing, leader path). Validator agreement
 is not proven by direct mode; the consensus-bound settlement, ladder binding and void
 refunds are covered by named leader-path tests here and the deterministic transitions are
 additionally confirmed live on studionet in `docs/deployment.md`.
@@ -112,6 +112,14 @@ custody (`test_file_paused_soft_fails`).
   never `gl.get_contract_at(...).emit_transfer`. This exact path was exercised live: a duplicate
   filing credited 2,500,000 and `claim_refundable_balance` released it back, leaving
   `total_refundable_custody` at zero (see `docs/deployment.md`).
+- FINDING R8a (FIXED, non-trapping filer deposit): the native filing value sent on
+  `file_dispute_payable` is tracked per docket (`filing_bond_native`) and is returned to the
+  filer through `refundable_balances` at EVERY terminal exit (decree settlement, contested
+  void, timeout void and cancel), so no filer deposit can ever be trapped in the contract.
+  This closes a hole found in this review pass where `native_escrow_balance` was previously a
+  one-way accumulator. FIXED: `test_filing_deposit_refunded_on_settlement`,
+  `test_filing_deposit_refunded_on_contested_void`,
+  `test_filing_deposit_refunded_on_expired_void`, `test_filing_deposit_refunded_on_cancel`.
 
 ## 7. Rule 9: consensus-bound baselines and the discrete ladder
 
@@ -164,7 +172,7 @@ custody (`test_file_paused_soft_fails`).
 
 ## 10. Tests that prove it
 
-66 direct-mode tests cover a negative case for every guard above plus positive scenario
+70 direct-mode tests cover a negative case for every guard above plus positive scenario
 flows; they are named inline. Run:
 
 ```
