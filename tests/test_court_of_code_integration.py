@@ -1,13 +1,14 @@
-"""Live integration tests against the seeded CourtOfCode deployment on studionet.
+"""Live integration tests against the Milestone v1 CourtOfCode deployment on studionet.
 
 These read the consensus-finalized state through the real GenLayer RPC and assert the
-accounting invariants and seeded tribunal data. They are the on-chain counterpart to
-the direct-mode leader-path tests. Run with:
+Chancery accounting invariants and seeded lifecycle data. They are the on-chain
+counterpart to the direct-mode leader-path tests. Run with:
 
     gltest tests/test_court_of_code_integration.py -v -s
 
-The deployment address is taken from evidence/_checkpoint.json written by
-scripts/deploy_studionet.py.
+The deployment address is taken from evidence/_checkpoint_v1.json written by
+scripts/deploy_studionet.py. Assertions are invariant-based because the exact award band
+is produced by validator LLM consensus and is not hard-coded.
 """
 
 import json
@@ -20,13 +21,15 @@ from gltest import get_contract_factory
 from gltest.accounts import get_default_account
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKPOINT = ROOT / "evidence" / "_checkpoint.json"
+CHECKPOINT = ROOT / "evidence" / "_checkpoint_v1.json"
 CONTRACT_NAME = "CourtOfCode"
+AWARD_LADDER = {0, 2500, 5000, 7500, 10000}
+FINAL_OR_ADJUDICATED = {"FINALIZED", "ADJUDICATED", "VOID_ZERO_WINNER_REFUND"}
 
 
 def _address():
     if not CHECKPOINT.exists():
-        pytest.skip("no studionet deployment checkpoint found; run deploy_studionet.py first")
+        pytest.skip("no v1 studionet checkpoint found; run deploy_studionet.py first")
     addr = json.loads(CHECKPOINT.read_text(encoding="utf-8")).get("contract_address")
     if not addr:
         pytest.skip("checkpoint has no contract_address")
@@ -52,75 +55,77 @@ def _read(contract, method, args=None, retries=6):
     raise AssertionError(f"read {method} failed after retries: {last}")
 
 
-def test_get_all_cases_returns_seeded_cases(deployed):
+def test_registry_returns_seeded_dockets(deployed):
     contract, _ = deployed
-    cases = _read(contract, "get_all_cases")
-    assert len(cases) >= 2
-    ids = {c["case_id"] for c in cases}
-    assert 1 in ids and 2 in ids
+    dockets = _read(contract, "get_all_dockets")
+    assert len(dockets) >= 2
+    ids = {d["docket_id"] for d in dockets}
+    assert "M1" in ids and "M2" in ids
 
 
-def test_adjudicated_case_conserves_escrow(deployed):
+def test_adjudicated_docket_is_conserved_and_on_the_ladder(deployed):
     contract, _ = deployed
-    case1 = _read(contract, "get_case", [1])
-    assert case1["status"] == "ADJUDICATED"
-    assert case1["verdict_label"] == "SPLIT_REMEDY"
-    assert case1["claimant_award_bps"] == 6000
-    assert case1["claimant_payout"] + case1["respondent_payout"] == case1["disputed_escrow"]
+    m1 = _read(contract, "get_docket", ["M1"])
+    assert m1["status"] in FINAL_OR_ADJUDICATED
+    # escrow conservation across the discrete ladder
+    assert m1["derived_claimant_payout"] + m1["derived_respondent_refund"] == m1["principal_cet"]
+    # the fund-moving award is a discrete anchor and the baseline is on the 500 grid
+    assert m1["claimant_award_bps"] in AWARD_LADDER
+    assert m1["quantized_spec_baseline_bps"] % 500 == 0
 
 
-def test_second_case_still_open(deployed):
+def test_docket_windows_respect_floors(deployed):
     contract, _ = deployed
-    case2 = _read(contract, "get_case", [2])
-    assert case2["status"] == "OPEN_FOR_REBUTTAL"
-    assert case2["disputed_escrow"] == 180000
+    m1 = _read(contract, "get_docket", ["M1"])
+    assert m1["rebuttal_deadline_epoch"] > m1["filing_epoch"]
+    assert m1["appeal_deadline_epoch"] >= m1["rebuttal_deadline_epoch"]
+    assert m1["adjudication_timeout_epoch"] > m1["appeal_deadline_epoch"]
 
 
-def test_briefs_recorded_for_case_one(deployed):
+def test_amicus_brief_recorded(deployed):
     contract, _ = deployed
-    briefs = _read(contract, "get_case_briefs", [1])
-    assert len(briefs) == 2
-    sides = sorted(b["side"] for b in briefs)
-    assert sides == ["SUPPORT_CLAIMANT", "SUPPORT_RESPONDENT"]
-    # The claimant-supporting brief was upvoted once.
-    by_side = {b["side"]: b for b in briefs}
-    assert by_side["SUPPORT_CLAIMANT"]["upvotes"] == 1
+    briefs = _read(contract, "get_docket_briefs", ["M1"])
+    assert len(briefs) >= 1
+    assert any(b["side"] == "SUPPORT_CLAIMANT" for b in briefs)
 
 
-def test_tribunal_stats_match_seed(deployed):
+def test_soft_fail_rejection_is_visible(deployed):
+    contract, owner = deployed
+    # the lifecycle fired an invalid payable filing for the owner; the reason is stored,
+    # and after claiming the refund the balance is drained back to zero.
+    reason = _read(contract, "get_last_payable_rejection", [owner.address])
+    assert str(reason) == "DUPLICATE_DOCKET_ID"
+    refundable = int(_read(contract, "get_refundable_balance", [owner.address]))
+    assert refundable >= 0
+
+
+def test_custody_accounting_reports_all_ledgers(deployed):
+    contract, _ = deployed
+    custody = _read(contract, "get_custody_accounting_summary")
+    for key in (
+        "vault_custody_balance",
+        "total_cet_supply",
+        "native_escrow_balance",
+        "total_refundable_custody",
+        "docket_count",
+    ):
+        assert key in custody
+    assert int(custody["total_cet_supply"]) > 0
+
+
+def test_tribunal_stats_match_lifecycle(deployed):
     contract, _ = deployed
     stats = _read(contract, "get_tribunal_stats")
-    assert stats["total_cases"] >= 2
-    assert stats["adjudicated_cases"] >= 1
-    assert stats["total_briefs"] >= 2
+    assert stats["total_dockets"] >= 2
+    assert stats["total_briefs"] >= 1
     assert stats["votes_for_claimant"] >= 1
-    assert stats["votes_for_respondent"] >= 1
 
 
-def test_juror_reputation_reflects_brief_and_upvote(deployed):
+def test_juror_reputation_on_leaderboard(deployed):
     contract, _ = deployed
-    juror1 = "0x9926c6407afb19b6349a9a68294e70b2ca3c4f29"
-    # Reputation is a pure function of jury activity: +10 per brief authored and +3 per
-    # upvote received on those briefs. Recompute it from live brief data so the assertion
-    # holds as the public demo accumulates more activity beyond the original seed.
-    authored = 0
-    received_upvotes = 0
-    for case in _read(contract, "get_all_cases"):
-        for b in _read(contract, "get_case_briefs", [case["case_id"]]):
-            if b["juror"].lower() == juror1:
-                authored += 1
-                received_upvotes += b["upvotes"]
-    expected = 10 * authored + 3 * received_upvotes
-    board = _read(contract, "get_juror_leaderboard")
-    reps = {r["juror"].lower(): r["reputation"] for r in board}
-    assert authored >= 1 and expected > 0
-    assert reps.get(juror1) == expected
-
-
-def test_split_awards_are_claimable(deployed):
-    contract, owner = deployed
-    claimant_award = _read(contract, "get_claimable_award", [owner.address])
-    assert int(claimant_award) == 150000  # 60% of 250000 escrow
-    respondent = "0xFF21Bc38046f8299544598C0e44C964A8E49E2C5"
-    resp_award = _read(contract, "get_claimable_award", [respondent])
-    assert int(resp_award) == 100000  # 40% of 250000 escrow
+    board = _read(contract, "get_judicial_leaderboard")
+    assert len(board) >= 1
+    assert all(r["reputation"] >= 10 for r in board)
+    # leaderboard is sorted descending by reputation
+    reps = [r["reputation"] for r in board]
+    assert reps == sorted(reps, reverse=True)

@@ -1,70 +1,129 @@
-// Pure helpers that mirror the on-chain settlement math in
-// contracts/court_of_code.py so the UI can preview exact outcomes deterministically.
-// Every function here is a faithful port of the contract's deterministic block.
+// Pure, deterministic mirrors of the on-chain Chancery settlement math in
+// contracts/court_of_code.py so the workbench can preview an exact decree before
+// any transaction is submitted. Every function is a faithful port of the contract.
 
-export const BPS_LADDER = 500;
+export const AWARD_LADDER = [0, 2500, 5000, 7500, 10000] as const;
+export const BASELINE_GRID = 500;
 export const BPS_MAX = 10000;
-export const TOKEN_CAP = 5000;
+
+export type VerdictBand =
+  | "FULL_CLAIMANT_DECREE"
+  | "MAJORITY_CLAIMANT_SPLIT"
+  | "EQUITABLE_FIFTY_SPLIT"
+  | "PARTIAL_CONTRIBUTION_AWARD"
+  | "RESPONDENT_SUMMARY_DISMISSAL";
 
 export function clampBps(bps: number): number {
   if (!Number.isFinite(bps)) return 0;
   return Math.max(0, Math.min(BPS_MAX, Math.floor(bps)));
 }
 
-// The contract snaps the raw LLM award onto a fixed 500 bps ladder so the value that
-// moves funds is a discrete label every validator must reproduce exactly.
-export function quantizeBps(bps: number): number {
-  const c = clampBps(bps);
-  return Math.floor(c / BPS_LADDER) * BPS_LADDER;
+// The fund-moving award is snapped onto the discrete 5-anchor judicial ladder so the
+// value is a label every validator must reproduce exactly, never a free-form number.
+export function snapToLadder(bps: number): number {
+  const v = clampBps(bps);
+  let best = AWARD_LADDER[0];
+  let bestDist = v - best;
+  for (const anchor of AWARD_LADDER) {
+    const dist = Math.abs(v - anchor);
+    if (dist < bestDist) {
+      best = anchor;
+      bestDist = dist;
+    }
+  }
+  return best;
 }
 
-// A claimant cannot win a majority award without the mandatory spec token.
-export function applyTokenCap(quantized: number, specTokenFound: boolean): number {
-  if (!specTokenFound && quantized > TOKEN_CAP) return TOKEN_CAP;
-  return quantized;
+// The specification-completeness baseline is quantized onto a fixed 500-bps grid.
+export function quantizeBaseline(bps: number): number {
+  const v = clampBps(bps);
+  return Math.floor(v / BASELINE_GRID) * BASELINE_GRID;
 }
 
-export function verdictLabel(bps: number): string {
-  if (bps >= 6500) return "CLAIMANT_PREVAILS";
-  if (bps >= 3500) return "SPLIT_REMEDY";
-  return "RESPONDENT_PREVAILS";
+export function bandFor(awardBps: number): VerdictBand {
+  if (awardBps === 10000) return "FULL_CLAIMANT_DECREE";
+  if (awardBps === 7500) return "MAJORITY_CLAIMANT_SPLIT";
+  if (awardBps === 5000) return "EQUITABLE_FIFTY_SPLIT";
+  if (awardBps === 2500) return "PARTIAL_CONTRIBUTION_AWARD";
+  return "RESPONDENT_SUMMARY_DISMISSAL";
 }
 
-// Escrow-conserving split: claimant is floored, respondent absorbs the remainder.
-export function splitPayout(escrow: number, bps: number): { claimant: number; respondent: number } {
-  const e = Math.max(0, Math.floor(escrow));
-  const claimant = Math.floor((e * bps) / BPS_MAX);
-  const respondent = e - claimant;
-  return { claimant, respondent };
-}
-
-export interface Settlement {
-  rawBps: number;
-  quantizedBps: number;
-  cappedBps: number;
+export interface DerivedPayouts {
   claimantPayout: number;
-  respondentPayout: number;
-  verdict: string;
+  respondentRefund: number;
+  slashAmount: number;
+}
+
+export function derivePayouts(principal: number, respondentBond: number, awardBps: number): DerivedPayouts {
+  const p = Math.max(0, Math.floor(principal));
+  const b = Math.max(0, Math.floor(respondentBond));
+  const claimantPayout = Math.floor((p * awardBps) / BPS_MAX);
+  const respondentRefund = p - claimantPayout;
+  const slashAmount = awardBps >= 7500 ? b : 0;
+  return { claimantPayout, respondentRefund, slashAmount };
+}
+
+export interface Apportionment {
+  rawAward: number;
+  snappedAward: number;
+  quantizedBaseline: number;
+  band: VerdictBand;
+  claimantCredit: number;
+  respondentCredit: number;
+  principal: number;
+  respondentBond: number;
   conserved: boolean;
 }
 
-// Full pipeline used by the what-if simulator and the split-award gauge.
-export function settle(rawBps: number, escrow: number, specTokenFound: boolean): Settlement {
-  const quantized = quantizeBps(rawBps);
-  const capped = applyTokenCap(quantized, specTokenFound);
-  const { claimant, respondent } = splitPayout(escrow, capped);
+// Full decree pipeline: award snaps to the ladder, baseline snaps to the 500 grid,
+// and the un-slashed respondent bond always returns to the respondent so the escrow
+// re-sums to principal + bond exactly.
+export function apportion(
+  rawAward: number,
+  rawBaseline: number,
+  principal: number,
+  respondentBond: number,
+): Apportionment {
+  const snappedAward = snapToLadder(rawAward);
+  const quantizedBaseline = quantizeBaseline(rawBaseline);
+  const band = bandFor(snappedAward);
+  const { claimantPayout, respondentRefund, slashAmount } = derivePayouts(
+    principal,
+    respondentBond,
+    snappedAward,
+  );
+  const p = Math.max(0, Math.floor(principal));
+  const b = Math.max(0, Math.floor(respondentBond));
+  const claimantCredit = claimantPayout + slashAmount;
+  const respondentCredit = respondentRefund + (b - slashAmount);
   return {
-    rawBps: clampBps(rawBps),
-    quantizedBps: quantized,
-    cappedBps: capped,
-    claimantPayout: claimant,
-    respondentPayout: respondent,
-    verdict: verdictLabel(capped),
-    conserved: claimant + respondent === Math.max(0, Math.floor(escrow)),
+    rawAward: clampBps(rawAward),
+    snappedAward,
+    quantizedBaseline,
+    band,
+    claimantCredit,
+    respondentCredit,
+    principal: p,
+    respondentBond: b,
+    conserved: claimantCredit + respondentCredit === p + b,
   };
 }
 
 export function shortAddr(addr: string): string {
   if (!addr) return "";
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+}
+
+export function formatEpoch(epoch: number): string {
+  if (!epoch) return "--";
+  return new Date(epoch * 1000).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+}
+
+export function remaining(nowEpoch: number, deadline: number): string {
+  if (!deadline) return "--";
+  const diff = deadline - nowEpoch;
+  if (diff <= 0) return "closed";
+  const h = Math.floor(diff / 3600);
+  const m = Math.floor((diff % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }

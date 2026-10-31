@@ -26,20 +26,25 @@ artifacts/
 *.log
 logs/
 
-# Media (demo video is generated, not committed on main)
+# Media (raw capture + generated audio are never committed)
 *.mp4
 *.webm
+*.wav
 video-raw/
 
-# Video working artifacts (the record_clips.mjs / build_video.mjs scripts stay tracked)
+# Re-publish the finished demo video from the two tracked locations only
+!docs/demo-video-subtitled.mp4
+!frontend/public/demo-video-subtitled.mp4
+
+# Video working artifacts (the recorder + renderer scripts stay tracked)
 video/*.png
 video/*.srt
-video/*.wav
 video/clips/
 video/concat.txt
+video/concat_*.txt
 video/timeline.json
 
 # Tooling / checkpoint state
-evidence/_checkpoint.json
+evidence/_checkpoint*.json
 .DS_Store
 Thumbs.db

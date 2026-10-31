@@ -5,8 +5,8 @@ import {
 } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 
-// Deployed CourtOfCode tribunal on studionet (chain 61999).
-export const DEFAULT_CONTRACT = "0x5049635f17E614f3BE0D3446af166DBC8E61c3eC";
+// Deployed CourtOfCode Chancery v1 on studionet (chain 61999).
+export const DEFAULT_CONTRACT = "0xC68d7c51FCDD67cCdcD951747C4CE8A8744f415d";
 export const STUDIONET_RPC = "https://studio.genlayer.com/api";
 
 const CONTRACT_KEY = "courtofcode.contract";
@@ -114,13 +114,13 @@ export async function writeContract(
   wallet: WalletState,
   functionName: string,
   args: unknown[],
-  opts: { leaderOnly?: boolean } = {},
+  opts: { leaderOnly?: boolean; value?: bigint } = {},
 ): Promise<WriteResult> {
   const hash = (await wallet.client.writeContract({
     address: contractAddress() as `0x${string}`,
     functionName,
     args: args as never,
-    value: 0n,
+    value: opts.value ?? 0n,
     leaderOnly: opts.leaderOnly ?? true,
   })) as string;
 

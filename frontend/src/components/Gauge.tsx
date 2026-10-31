@@ -10,8 +10,8 @@ interface GaugeProps {
   size?: number;
 }
 
-// Crisp custom SVG ring gauge with a gradient stroke, used for the split-award bps and
-// the simulator's live consensus score.
+// Crisp custom SVG ring gauge with a gradient stroke, used for the discrete award bps and
+// the apportionment matrix's live consensus readout.
 export default function Gauge({
   value,
   max = 10000,
