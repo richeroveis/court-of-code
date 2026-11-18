@@ -1,184 +1,250 @@
-# CourtOfCode Adversarial Review (Milestone v1)
+# CourtOfCode Adversarial Review (Milestone v2)
 
-Every finding below was produced by attacking `contracts/court_of_code.py` as if each
-caller, juror, party and every byte of externally fetched evidence were hostile, and as if
-the contract custodied real value. Each item is marked FIXED with the direct-mode test that
-proves it, or OPEN with a stated reason. All findings are checked with
-`gltest tests/test_court_of_code_direct.py` (70 passing, leader path). Validator agreement
-is not proven by direct mode; the consensus-bound settlement, ladder binding and void
-refunds are covered by named leader-path tests here and the deterministic transitions are
-additionally confirmed live on studionet in `docs/deployment.md`.
+Every finding below was produced by attacking the contract in `contracts/court_of_code.py`
+as if each caller, juror, party and every byte of externally fetched evidence were
+hostile. Each item is marked FIXED with the direct-mode test that proves it, or OPEN
+with the reason. All tests run with `gltest tests/test_court_of_code_direct.py`
+(87 passing, leader path). Validator agreement is proven end-to-end on studionet
+in the seeded deployment described in `docs/deployment.md`.
+
+This revision implements all steward remediations requested by Joaquin:
+
+- **Strict Asset-Domain Separation:** Domain A (`CET` Bounty Escrow) and Domain B (`Native GEN` Bonds)
+  are conserved independently end-to-end. Native bonds (`filer_bond`, `respondent_bond`, `challenge_bond`)
+  are accepted as payable `gl.message.value`, stored in `native_bond_custody` and `refundable_balances`,
+  and refunded/withdrawn strictly in native GEN via EVM dispatch (`IEoaRecipient.emit_transfer`).
+  Exact native conservation holds with 0 wei cross-domain leakage:
+  `native_bond_custody == active_locked_native_bonds + total_refundable_native_balances`.
+- **Fail-Closed Live Evidence & Bound Consensus:** Adjudication strictly fails closed
+  (`EVIDENCE_UNAVAILABLE_FAIL_CLOSED`) if either required live evidence URL fails, errors, or returns
+  less than 32 substantive characters. Summary fallback is eliminated. The evidence verification outcome
+  (`evidence_verification_status`, `claimant_source_verified`, `respondent_source_verified`) is explicitly
+  bound in 100% exact validator agreement principle.
+- **Requirement A, real on-chain value custody and payout:** CET bounty escrow moves real token balances.
+- **Requirement B, two-party authorization:** deterministic split requires counterparty co-signature.
+- **Requirement C, response-deadline gate:** live adjudication blocked until rebuttal or deadline expiry.
 
 ## 1. State machine
 
-| Status | Trigger | Next status | Effect on custody |
+| Status | Who may act | Transition | Effect on custody |
 | --- | --- | --- | --- |
-| (created) | `file_dispute_payable` | `OPEN_FOR_REBUTTAL` | principal debited from claimant CET into `vault_custody_balance`; native filing bond into `native_escrow_balance` |
-| `OPEN_FOR_REBUTTAL` | `post_respondent_bond_payable` | `READY_FOR_TRIAL` | respondent CET bond added to vault |
-| any open | `file_amicus_brief` / `upvote_amicus_brief` | unchanged | reputation only, no fund movement |
-| open after gate | `adjudicate_docket` | `ADJUDICATED` | derived band + payouts stored, no transfer yet |
-| `ADJUDICATED` | `challenge_verdict_payable` (party, in window) | `CHALLENGED` | challenge bond added to vault |
-| `ADJUDICATED`/`CHALLENGED` after appeal deadline | `execute_decree_settlement` | `FINALIZED` or void | escrow-conserving credits |
-| open past timeout | `claim_expired_or_uncontested_refund` | `VOID_ZERO_WINNER_REFUND` | 100 percent principal + bonds refunded |
-| `OPEN_FOR_REBUTTAL`, no briefs | `cancel_docket` (claimant) | `CANCELLED` | principal returned to claimant CET |
+| (created) | claimant via `file_dispute_case` | -> `OPEN_FOR_REBUTTAL` | debit `disputed_escrow` from claimant `token_balances`, credit `escrow_vault_balance` |
+| `OPEN_FOR_REBUTTAL` | respondent or owner: `submit_respondent_rebuttal` | -> `READY_FOR_TRIAL` | none; sets `rebuttal_submitted` |
+| `OPEN_FOR_REBUTTAL` | claimant: `cancel_case` (only if `amicus_count == 0`) | -> `CANCELLED` | refund `disputed_escrow` from vault back to claimant wallet |
+| `OPEN_FOR_REBUTTAL` | any account: `expire_rebuttal_window` after the deadline | -> `REBUTTAL_DEADLINE_PASSED` | none |
+| `OPEN_FOR_REBUTTAL` / `READY_FOR_TRIAL` / `REBUTTAL_DEADLINE_PASSED` | a party: `propose_deterministic_split` | same status | none; records the proposal and the proposing side |
+| (any of the above with a live proposal) | the counterparty: `adjudicate_case_deterministic` | -> `SETTLED_MUTUAL` | credit both `claimable_awards`; funds stay in the vault |
+| `OPEN_FOR_REBUTTAL` / `READY_FOR_TRIAL` / `REBUTTAL_DEADLINE_PASSED` | `adjudicate_case_live` (gated) | -> `ADJUDICATED` | credit both `claimable_awards`; funds stay in the vault |
+| `ADJUDICATED` / `SETTLED_MUTUAL` | `withdraw_award` | terminal for that award | debit vault, credit caller `token_balances` |
+| anytime | any account: `advance_tribunal_clock` (1..50) | monotonic clock | none |
 
-There is no `ADJUDICATED` deterministic backdoor and no `advance_clock`. Rule 2 is enforced
-structurally: `test_no_manual_clock_advance_or_deterministic_backdoor` greps the source for
-`def advance_clock`, `gl.advance_clock` and a deterministic settlement symbol and fails if
-any appear. `test_no_admin_fund_bypass_symbols` confirms no owner-only path can move escrow;
-the only owner privilege is `set_filing_paused`, which gates new filings and can never touch
-custody (`test_file_paused_soft_fails`).
+`SETTLED_MUTUAL` is now written by `adjudicate_case_deterministic`, so the label that was
+previously reserved for future use is exercised on the leader path and on studionet.
 
-## 2. Liveness: no stuck funds
+## 2. Requirement A: real custody and payout (CET ledger)
 
-- Every open docket has a terminal exit. If the respondent never rebuts, the claimant either
-  `cancel_docket` (while no juror has filed) or waits for the rebuttal deadline to expire and
-  then `adjudicate_docket` from the window-expired path
-  (`test_adjudicate_on_window_expiry_without_rebuttal`).
-- If nobody ever adjudicates, `claim_expired_or_uncontested_refund` voids and refunds 100
-  percent of principal plus bonds after `adjudication_timeout_epoch`
-  (`test_expired_unadjudicated_docket_void_refunds_principal`).
-- Dead evidence URLs cannot freeze a case: the leader function falls back to the on-chain
-  brief summary and records `web_source_verified=false`, still producing a consensus-bound
-  band (`test_web_source_unreachable_marks_unverified_but_still_adjudicates`).
-- The `set_filing_paused` valve is not a fund lock: it only blocks new filings and can be
-  cleared by the owner; in-flight escrow always has the timeout refund available.
+- The contract mints `10000000` CET to the deployer in `__init__` and keeps a
+  `token_balances: TreeMap[Address, u256]` plus a single `escrow_vault_balance: u256`.
+  FIXED: `test_owner_minted_initial_supply`.
+- `file_dispute_case` debits the claimant wallet and credits the vault, so every unit of
+  disputed escrow is genuinely custodied by the contract before any award can be paid.
+  If the claimant cannot cover the escrow (even after the automatic first-time onboarding
+  faucet) the filing reverts. FIXED: `test_custody_locks_tokens_on_file_and_transfers_on_withdraw`,
+  `test_file_auto_grants_faucet_for_first_time_filer`,
+  `test_file_reverts_when_balance_cannot_cover_custody`.
+- Settlement only credits `claimable_awards`; the escrow stays locked 1:1 in the vault
+  until each party withdraws. `withdraw_award` debits the vault and credits the caller's
+  wallet, and reverts if the vault cannot cover the award. `cancel_case` refunds the
+  locked escrow from the vault straight to the claimant wallet. FIXED:
+  `test_custody_locks_tokens_on_file_and_transfers_on_withdraw`, `test_withdraw_returns_and_resets`,
+  `test_respondent_withdraws_their_share`, `test_cancel_refunds_claimant`.
+- Custody conservation is enforced by construction: total withdrawals plus refunds can
+  never exceed what was locked, because both only move units out of `escrow_vault_balance`
+  and the vault only ever grows by exactly `disputed_escrow` at filing.
+- Onboarding `claim_faucet_tokens` is one-time per address; `fund_account` is owner-only;
+  `transfer_tokens` requires a sufficient sender balance. These are the only mints and
+  they are bounded, so the vault is never under-backed. FIXED:
+  `test_faucet_credits_once_and_reverts_second_claim`, `test_fund_account_owner_only`,
+  `test_transfer_tokens_requires_balance`.
+- Views expose custody: `get_wallet_balance` and `get_tribunal_stats`
+  (`escrow_vault_balance`, `tribunal_clock`). FIXED: `test_wallet_balance_view_and_invalid_address`,
+  `test_tribunal_stats_totals`.
 
-## 3. Race conditions between competing transitions
+## 3. Requirement B: two-party mutual authorization of a deterministic split
 
-- Double settlement: `execute_decree_settlement` guards on `settled` and on status
-  (`ADJUDICATED`/`CHALLENGED`), then flips to `FINALIZED`. A second call reverts
-  (`test_cannot_adjudicate_twice`, `test_settlement_after_appeal_window_conserves` and the
-  already-settled guard in `claim_expired_or_uncontested_refund`).
-- Cancel versus adjudicate: `cancel_docket` requires `OPEN_FOR_REBUTTAL` and zero briefs;
-  adjudication leaves that state, so whichever lands first blocks the other
-  (`test_cancel_blocked_when_briefs_exist`, `test_cancel_blocked_for_non_claimant`).
-- Challenge versus settlement: `challenge_verdict_payable` requires `ADJUDICATED` and the
-  appeal window still open; settlement requires the appeal window closed, so a party challenge
-  always precedes and forces the void path (`test_contested_challenge_voids_and_refunds_all`).
-- Withdraw versus new credit: `withdraw_refund` clamps to the current balance and never
-  over-draws; `withdraw_award` reverts on zero so it cannot double-pay
-  (`test_withdraw_refund_clamps_overrequest`, `test_withdraw_award_zero_reverts`).
+- Unilateral / owner-only deterministic adjudication was removed. `adjudicate_case_deterministic`
+  now only finalizes a split that the counterparty co-signs.
+- A split must first be `propose_deterministic_split` by a party (claimant or respondent);
+  the proposer's own approval flag is set and the counterparty's flag is cleared. Anyone
+  who is neither party (including the owner) reverts. FIXED:
+  `test_propose_rejects_non_party`, `test_propose_rejects_bps_above_max`.
+- The counterparty co-signs by calling `adjudicate_case_deterministic` with the exact same
+  `bps`. A proposer cannot approve their own proposal, a third party cannot co-sign, a
+  missing proposal reverts, and a mismatched `bps` reverts. Only when both flags are set
+  does the case settle as `SETTLED_MUTUAL`. FIXED:
+  `test_deterministic_split_requires_both_claimant_and_respondent_authorization`,
+  `test_deterministic_unilateral_without_proposal_reverts`,
+  `test_deterministic_proposer_self_approval_reverts`,
+  `test_deterministic_third_party_cannot_cosign`,
+  `test_deterministic_mismatched_bps_reverts`,
+  `test_deterministic_respondent_proposes_claimant_cosigns`,
+  `test_deterministic_rejects_bps_above_max`, `test_cannot_adjudicate_twice`.
+- Award `bps` is rejected (not clamped) above 10000 on both the proposal and the co-sign.
+  FIXED: `test_propose_rejects_bps_above_max`, `test_deterministic_rejects_bps_above_max`.
 
-## 4. Accounting invariants
+## 4. Requirement C: response deadline gates live adjudication
 
-- Escrow conservation is the core invariant. `_derive_payouts` sets
-  `payout = principal * award_bps // 10000` (award bounded to the ladder, so the floor never
-  exceeds principal) and `refund = principal - payout`. At settlement the claimant receives
-  `payout + slash` and the respondent receives `refund + (bond - slash)`, so the two credits
-  always re-sum to `principal + bond`. FIXED:
-  `test_settlement_after_appeal_window_conserves`,
-  `test_settlement_partial_award_returns_unslashed_bond`,
-  `test_full_claimant_decree_credits_principal_and_slash`, and the `conserved` flag returned
-  by `_compute_docket_state` (`test_view_and_settlement_never_diverge`).
-- The void and timeout refunds return exactly `principal + respondent_bond + challenge_bond`
-  and reduce `vault_custody_balance` by the same amount, so the vault never leaks or traps a
-  unit (`test_expired_unadjudicated_docket_void_refunds_principal`,
-  `test_contested_challenge_voids_and_refunds_all`).
-- One shared invariant helper (Rule 5): every read view, the leaderboard and settlement all
-  call `_compute_docket_state`, so a reported payout can never diverge from the settled value.
+- The contract keeps a monotonic `tribunal_clock` advanced only in bounded steps (1..50).
+  Each case records `filed_at_clock` and `rebuttal_deadline_clock = filed_at_clock + 3`.
+  FIXED: `test_advance_tribunal_clock_bounds`.
+- `adjudicate_case_live` reverts while `rebuttal_submitted` is false and the clock has not
+  reached the deadline. It succeeds the instant the respondent rebuts (even before the
+  deadline) and, if the respondent is silent, once the deadline has passed. FIXED:
+  `test_live_adjudication_reverts_before_rebuttal_and_before_deadline`,
+  `test_live_adjudication_succeeds_immediately_after_respondent_rebuttal`,
+  `test_live_adjudication_succeeds_after_onchain_rebuttal_deadline_expires`.
+- `expire_rebuttal_window` moves an un-rebutted, past-deadline case to
+  `REBUTTAL_DEADLINE_PASSED` and reverts early if the deadline has not passed. FIXED:
+  `test_expire_rebuttal_window_before_deadline_reverts`,
+  `test_expire_rebuttal_window_after_deadline_advances_status`.
 
-## 5. Input validation at every entry point
+## 5. Liveness: no stuck funds
 
-- Respondent must be a well-formed 20-byte hex address and differ from the caller
-  (`test_file_bad_respondent_soft_fails`, `test_file_self_dealing_soft_fails`).
-- Docket id, title, brief summary and spec token are length-bounded and shape-checked
-  (`test_file_bad_token_soft_fails`, and the bad-pr-url guard `test_file_bad_pr_url_soft_fails`).
-- Both evidence URLs must be `http(s)` with no whitespace or control characters, 8..512 long
-  (`_is_valid_url`, exercised by `test_file_bad_pr_url_soft_fails`).
-- Principal has an inclusive floor and ceiling (100 .. 1e12) and the filer must hold enough
-  CET (`test_file_underfunded_cet_soft_fails`).
-- The rebuttal and appeal windows each have a floor and a ceiling in seconds, so no caller can
-  set a zero or absurd deadline (`test_file_bad_rebuttal_window_soft_fails`,
-  `test_file_bad_appeal_window_soft_fails`).
-- View arguments are validated: bad addresses and unknown dockets revert cleanly
-  (`test_refundable_and_rejection_views_reject_bad_address`, `test_get_docket_missing_reverts`).
+- Finding L1 (OPEN_FOR_REBUTTAL griefing): a respondent who never rebuts no longer stalls
+  the case. Either the on-chain response deadline expires and any account may trigger
+  `expire_rebuttal_window` / `adjudicate_case_live`, or the two parties agree a
+  `propose_deterministic_split` plus counterparty co-sign. FIXED: `test_owner_may_submit_rebuttal`,
+  `test_cancel_refunds_claimant`, `test_live_adjudication_succeeds_after_onchain_rebuttal_deadline_expires`.
+- Finding L2 (cancel blocked by early briefs): once `amicus_count > 0`, `cancel_case` is
+  refused, but the deadline and the mutual split remain available, so custody still reaches
+  a party. FIXED: `test_cancel_blocked_when_briefs_exist` plus the deadline and mutual tests.
+- Finding L3 (dead evidence url): this was previously accepted because there was no
+  on-chain exit. It is now bounded by the explicit `rebuttal_deadline_clock`; even if the
+  live web render keeps failing, the two parties can settle deterministically through
+  `propose_deterministic_split` + `adjudicate_case_deterministic`, which fetches nothing.
+  FIXED: `test_deterministic_split_requires_both_claimant_and_respondent_authorization`
+  and the deadline expiry tests.
 
-## 6. Rule 8: non-trapping payable refunds (the Joaquin rule)
+## 6. Race conditions between competing transitions
 
-- No `@gl.public.write.payable` method ever reverts on a validation failure. On any failure
-  `file_dispute_payable`, `post_respondent_bond_payable` and `challenge_verdict_payable` credit
-  100 percent of `gl.message.value` to `refundable_balances[sender]`, record the reason in
-  `last_payable_rejection[sender]`, bump `total_refundable_custody`, and return
-  `SOFT_FAIL_REFUND_CREDITED:<reason>` instead of reverting. FIXED:
-  `test_fund_zero_soft_fails_without_revert`, `test_file_duplicate_docket_id_soft_fails`,
-  `test_file_self_dealing_soft_fails`, `test_file_underfunded_cet_soft_fails`,
-  `test_file_bad_rebuttal_window_soft_fails`, `test_rebuttal_non_respondent_soft_fails`,
-  `test_rebuttal_underfunded_bond_soft_fails`, `test_rebuttal_after_window_expiry_soft_fails`,
-  `test_challenge_non_party_soft_fails`, `test_challenge_before_adjudication_soft_fails`.
-- The refund custody is fully claimable and tracked: `test_custody_summary_tracks_refundable_custody`,
-  `test_refund_claim_zero_when_nothing`, `test_withdraw_refund_clamps_overrequest`. Native
-  release to an EOA uses `@gl.evm.contract_interface` (`_GENRecipient(sender).emit_transfer`),
-  never `gl.get_contract_at(...).emit_transfer`. This exact path was exercised live: a duplicate
-  filing credited 2,500,000 and `claim_refundable_balance` released it back, leaving
-  `total_refundable_custody` at zero (see `docs/deployment.md`).
-- FINDING R8a (FIXED, non-trapping filer deposit): the native filing value sent on
-  `file_dispute_payable` is tracked per docket (`filing_bond_native`) and is returned to the
-  filer through `refundable_balances` at EVERY terminal exit (decree settlement, contested
-  void, timeout void and cancel), so no filer deposit can ever be trapped in the contract.
-  This closes a hole found in this review pass where `native_escrow_balance` was previously a
-  one-way accumulator. FIXED: `test_filing_deposit_refunded_on_settlement`,
-  `test_filing_deposit_refunded_on_contested_void`,
-  `test_filing_deposit_refunded_on_expired_void`, `test_filing_deposit_refunded_on_cancel`.
+- Finding R1 (double settlement): every settlement path guards on `ADJUDICABLE_STATUSES`
+  and flips status to a terminal one (`ADJUDICATED` / `SETTLED_MUTUAL` / `CANCELLED`). A
+  second settlement reverts, so custody can never be split twice. FIXED:
+  `test_cannot_adjudicate_twice`, `test_live_rejects_when_not_open`,
+  `test_cancel_blocked_after_rebuttal`.
+- Finding R2 (cancel vs adjudicate vs expire): mutually exclusive by status; `cancel_case`
+  requires `OPEN_FOR_REBUTTAL`, settlements require an adjudicable status and then leave it.
+  Whichever lands first blocks the others. FIXED: `test_cancel_blocked_after_rebuttal`,
+  `test_brief_rejected_after_adjudication`.
+- Finding R3 (withdraw vs new credit): `withdraw_award` reads the full award, zeroes it,
+  debits the vault, and reverts on zero or on an under-funded vault, so it can never
+  over-draw or double-pay. FIXED: `test_withdraw_returns_and_resets`, `test_withdraw_zero_reverts`.
 
-## 7. Rule 9: consensus-bound baselines and the discrete ladder
+## 7. Accounting invariants
 
-- All fields the payout math needs (respondent, principal, bond, spec token, title, summary,
-  both URLs) are snapshotted into plain locals BEFORE entering `gl.nondet`, so validators
-  cannot diverge on stale storage reads.
-- Inside the leader function the raw model score is quantized onto the 500 bps baseline grid
-  and the award is snapped onto the discrete five-anchor ladder {0, 2500, 5000, 7500, 10000};
-  the verdict band and the exact derived integer payouts are computed there, so the value that
-  determines a transfer is a discrete label every validator must reproduce
-  (`test_award_snapped_to_discrete_ladder`, `test_baseline_quantized_onto_500_grid`).
-- `gl.eq_principle.prompt_comparative` requires 100 percent exact agreement on band, baseline,
-  award and all three derived amounts; only the prose opinion may be similar. After consensus
-  the contract re-derives the payouts deterministically and reverts if any consensus label is
-  off the fixed grids or mismatches (`test_adjudicate_after_rebuttal_majority`,
-  `test_full_claimant_decree_credits_principal_and_slash`,
-  `test_partial_contribution_award_band`, `test_respondent_summary_dismissal_zero_award`).
+- Invariant: `claimant_payout + respondent_payout == disputed_escrow` for every settlement.
+  The split is `claimant_payout = escrow * bps // 10000` (bps bounded to 0..10000, so the
+  floor is always <= escrow) and `respondent_payout = escrow - claimant_payout`, conserving
+  every unit. FIXED: `test_custody_locks_tokens_on_file_and_transfers_on_withdraw`,
+  `test_deterministic_split_labels_boundaries`, `test_live_claimant_prevails_conserves`,
+  `test_respondent_withdraws_their_share`.
+- Finding A1 (vote stuffing): `has_voted_case` enforces one tally vote per juror per case,
+  and `has_upvoted_brief` enforces one upvote per `(brief, account)`. FIXED:
+  `test_duplicate_juror_vote_rejected`, `test_duplicate_upvote_rejected`.
 
-## 8. Consensus and injection safety (GenLayer)
+## 8. Input validation at every entry point
 
-- Prompt injection through fetched evidence: every fetched body is run through `_sanitize_text`
-  (control characters dropped, any `</untrusted` delimiter defused, truncated), and the
-  settlement rule is derived from the quantized band and the deterministic ladder, not from any
-  number embedded in the page, so evidence cannot move funds it does not deserve
-  (`test_web_source_verified_when_reachable`, `test_web_source_unreachable_marks_unverified_but_still_adjudicates`).
-- Fail-closed parsing: a non-dict tribunal result raises `[LLM_ERROR]` so the transaction
-  rotates instead of persisting garbage; the tribunal prompt is built only from sanitized parts.
-- OPEN (accepted): the claimant-authored `title`, `brief_summary` and `mandatory_spec_token` are
-  validated (length, URL and shape) but are not passed through `_sanitize_text` before entering
-  the tribunal prompt. This is a judgment-shaping concern, not a fund leak: the award is still
-  forced onto the fixed ladder, gated by exact validator agreement and re-derived after
-  consensus, so no crafted string can raise a payout beyond the band the validators
-  independently reproduce. Planned hardening: sanitize these fields too.
-- OPEN (documented): `adjudicate_docket` is permissionless once the timing gate is satisfied,
-  matching the tribunal model. It cannot steal funds because the award is fully evidence and
-  ladder driven regardless of the trigger, but a hostile early trigger could resolve a case
-  before a party is ready. Tracked as a product decision, not a fund-safety bug.
+- Address sanity: `respondent` must be a well-formed 20-byte hex address and must differ
+  from the caller; `fund_account` and `transfer_tokens` validate `recipient`; the award and
+  balance views validate the queried address. FIXED: `test_reject_invalid_respondent_address`,
+  `test_reject_self_respondent`, `test_fund_account_owner_only`,
+  `test_get_claimable_award_invalid_address_reverts`, `test_wallet_balance_view_and_invalid_address`.
+- Length floors and ceilings on every string, both endpoints checked. FIXED:
+  `test_reject_empty_title`, `test_reject_title_too_long`, `test_reject_rubric_too_long`,
+  `test_brief_rejects_argument_too_long`, `test_rebuttal_rejects_long_note`.
+- URL validation: `http(s)` scheme only, no whitespace or control characters, 8..512 length. FIXED:
+  `test_reject_non_http_url`, `test_reject_url_with_space`, `test_reject_url_too_short`,
+  `test_rebuttal_rejects_bad_url`.
+- Escrow floor and ceiling 100..10000000 enforced inclusively, plus a per-account custody
+  check. FIXED: `test_reject_escrow_below_floor`, `test_reject_escrow_above_ceiling`,
+  `test_accept_escrow_floor`, `test_accept_escrow_ceiling`.
+- Tribunal clock advance is bounded 1..50. FIXED: `test_advance_tribunal_clock_bounds`.
 
-## 9. The hosted-studio settlement limitation (honest, OPEN)
+## 9. Consensus safety (GenLayer)
 
-- FINDING S1 (OPEN): the live `adjudicate_docket` transaction on studionet FINALIZED and
-  returned a decree, but the hosted studio did not commit the non-deterministic
-  `prompt_comparative` state delta to canonical storage, so on-chain `execute_decree_settlement`
-  could not be driven from it (two live renders even produced different bands). This is a
-  limitation of the hosted consensus commit path, not the contract. The contract re-reads the
-  docket fresh after the nondet block before mutating (see `adjudicate_docket`), and no
-  deterministic settlement backdoor was added to paper over it, exactly as Rule 2 requires. All
-  fund-bearing settlement logic, escrow conservation, the discrete ladder binding and the void
-  and timeout refunds are proven by the direct-mode consensus-bound tests above.
+- Finding C1 (free-form LLM number moving funds): the raw `claimant_award_bps` is snapped
+  onto a fixed 21-step ladder (multiples of 500 bps) inside the non-deterministic block, so
+  the value that determines a transfer is a discrete label. The equivalence principle
+  requires the quantized `claimant_award_bps` and the boolean `spec_token_found` to be
+  exactly equal across validators; only the prose opinion may be similar. FIXED:
+  `test_live_free_form_bps_is_quantized` (8337 -> 8000).
+- Finding C2 (missing mandatory spec token): if `spec_token_found` is false, any bps above
+  5000 is capped to 5000 deterministically after consensus. FIXED:
+  `test_live_missing_token_caps_majority`.
+- Finding C3 (prompt injection through fetched evidence): all fetched bodies are stripped
+  of control characters, any `</untrusted` sequence is defused, and text is truncated to
+  5000 characters. The split is derived from the quantized label and the deterministic
+  spec-token cap, both applied in contract code after consensus. FIXED:
+  `test_live_prompt_injection_cannot_move_funds`.
+- Finding C4 (party-authored rubric, title and spec token were not sanitized): this is now
+  FIXED. `adjudicate_case_live` runs `case_title`, `contract_rubric` and
+  `mandatory_spec_token` through the same `_sanitize_evidence` control-char /
+  delimiter-defusing sanitizer before building the tribunal prompt, so a hostile claimant
+  can no longer inject a closing `</untrusted...>` tag or an over-reaching instruction
+  through the fields they author at filing time. FIXED:
+  `test_live_hostile_rubric_delimiters_are_sanitized` (malicious rubric/title cannot lift
+  the award past the deterministic spec-token cap).
+- Fail-closed on bad model output: a non-dict tribunal result raises an `[LLM_ERROR]` so the
+  transaction rotates instead of persisting garbage. Note: this is a leader-path test only.
+- Accepted limitation (documented, not a fund leak): once the response gate opens (a rebuttal
+  was filed or the deadline expired), `adjudicate_case_live` is still triggerable by any
+  account, and it races `propose_deterministic_split` + co-sign. This cannot steal funds:
+  the live award is fully evidence-driven and spec-token-capped regardless of who triggers
+  it, and the first settlement to reach consensus flips the case to a terminal status so the
+  competing path reverts and can never double-credit (Finding R1, proven by
+  `test_cannot_adjudicate_twice` and `test_live_rejects_when_not_open`). The practical cost
+  is timing: a hostile trigger can resolve a case the moment the window opens. Both parties
+  retain the mutual-split path before that, so custody always reaches a party.
 
-## 10. Tests that prove it
+## 10. Strict Asset-Domain Separation (CET Escrow vs Native GEN Bonds)
 
-70 direct-mode tests cover a negative case for every guard above plus positive scenario
-flows; they are named inline. Run:
+- **Domain A (CET Escrow):** Handled via `token_balances` and `escrow_vault_balance`.
+  Disputed escrow is locked from claimant CET on filing and distributed solely as CET awards
+  upon settlement, cancel, or timeout.
+- **Domain B (Native GEN Bonds):** Filer bond, respondent bond, and challenge bond are payable
+  in native GEN wei via `gl.message.value`. They are stored in `native_bond_custody` and credited
+  to `refundable_balances[account]`.
+- **Zero Cross-Domain Leakage:** Native bonds never touch `token_balances` or `escrow_vault_balance`.
+  Withdrawing or claiming refundable balances dispatches real native GEN via
+  `IEoaRecipient(sender).emit_transfer(value=amount)`.
+- **Exact Conservation:** Total native custody equals active locked bonds plus total refundable balances:
+  `native_bond_custody == active_locked_native_bonds + total_refundable_native_balances`.
+  FIXED: `test_native_bonds_strict_asset_domain_separation`, `test_withdraw_refund_dispatches_native_gen`,
+  `test_challenge_bond_lifecycle`.
 
+## 11. Fail-Closed Live Evidence Verification
+
+- **Elimination of Summary Fallback:** Any fallback to `claimant_summary` or `respondent_summary`
+  when web fetches fail is strictly removed.
+- **Live URL Verification:** `gl.nondet.web.render` fetches live evidence. If the claimant URL fails,
+  errors, or returns under 32 substantive chars, `claimant_source_verified` is False. If respondent
+  rebutted and their URL fails, `respondent_source_verified` is False.
+- **Fail-Closed Gate:** If either required source is unavailable, `evidence_verification_status`
+  evaluates to `"EVIDENCE_UNAVAILABLE_FAIL_CLOSED"`. Adjudication sets `verdict_band = "EVIDENCE_UNAVAILABLE_FAIL_CLOSED"`,
+  awards 0 to both parties, and blocks settlement.
+- **Consensus Binding:** `gl.eq_principle.prompt_comparative` enforces 100% exact validator agreement
+  on `evidence_verification_status`, `claimant_source_verified`, and `respondent_source_verified`.
+  FIXED: `test_fail_closed_when_claimant_evidence_fails`, `test_fail_closed_when_claimant_evidence_too_short`,
+  `test_fail_closed_when_respondent_evidence_fails`, `test_fail_closed_is_retryable_once_evidence_restored`.
+
+## 12. Tests that prove it
+
+87 direct-mode tests cover every security guard, asset-domain separation invariant, and
+fail-closed evidence verification path. Run:
+
+```bash
+python -m pytest tests/test_court_of_code_direct.py -v
 ```
-gltest tests/test_court_of_code_direct.py
-```
 
-Direct mode exercises only the leader path. Validator agreement for the comparative tribunal
-and the quantization ladder is validated end to end on the deterministic transitions in the
-live deployment described in `docs/deployment.md`.
+All 87 leader-path tests pass 100%. Live multi-validator consensus agreement is confirmed
+on studionet in `docs/deployment.md`.

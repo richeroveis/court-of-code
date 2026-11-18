@@ -1,6 +1,17 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import confetti from "canvas-confetti";
-import { Scale, Volume2, VolumeX, Gavel, Wallet, RefreshCw } from "lucide-react";
+import {
+  Scale,
+  Volume2,
+  VolumeX,
+  Gavel,
+  ShieldAlert,
+  Sparkles,
+  Radio,
+  Trophy,
+  Wallet,
+  RefreshCw,
+} from "lucide-react";
 import {
   WalletState,
   contractAddress,
@@ -10,19 +21,14 @@ import {
   rotateBurner,
   readContract,
   writeContract,
+  getWalletBalance,
 } from "./lib/genlayer";
-import type { Brief, CustodySummary, Docket, LeaderRow, TribunalStats } from "./lib/types";
 import BackgroundFX from "./components/BackgroundFX";
-import DocketRegistry from "./components/DocketRegistry";
-import CustodyDrawer from "./components/CustodyDrawer";
-import EvidenceBench from "./components/EvidenceBench";
-import AwardMatrix from "./components/AwardMatrix";
-import DecreeTranscript from "./components/DecreeTranscript";
-import RuleBench from "./components/RuleBench";
-import { shortAddr } from "./lib/court";
+import Gauge from "./components/Gauge";
+import Simulator from "./components/Simulator";
+import PromptInspector from "./components/PromptInspector";
+import GuardLab from "./components/GuardLab";
 import { isMuted, toggleMuted, click, hum, chime, errorBuzz } from "./lib/sound";
-
-const LOGO_URL = `${import.meta.env.BASE_URL}logo.png`;
 
 function celebrate() {
   confetti({
@@ -30,8 +36,67 @@ function celebrate() {
     spread: 78,
     startVelocity: 32,
     origin: { y: 0.66 },
-    colors: ["#38BDF8", "#D4AF37", "#34d399", "#e2be60"],
+    colors: ["#22d3ee", "#e2be60", "#34d399", "#f59e0b"],
   });
+}
+
+interface DisputeCase {
+  case_id: number;
+  claimant: string;
+  respondent: string;
+  case_title: string;
+  contract_rubric: string;
+  mandatory_spec_token: string;
+  claimant_evidence_url: string;
+  respondent_rebuttal_url: string;
+  rebuttal_note: string;
+  disputed_escrow: number;
+  votes_for_claimant: number;
+  votes_for_respondent: number;
+  amicus_count: number;
+  status: string;
+  claimant_award_bps: number;
+  claimant_payout: number;
+  respondent_payout: number;
+  verdict_label: string;
+  judicial_opinion: string;
+  proposed_split_bps: number;
+  split_proposer: string;
+  settlement_proposal_note: string;
+  claimant_approved_split: boolean;
+  respondent_approved_split: boolean;
+  filed_at_clock: number;
+  rebuttal_deadline_clock: number;
+  rebuttal_submitted: boolean;
+  filer_bond?: number;
+  respondent_bond?: number;
+  challenge_bond?: number;
+  evidence_verification_status?: string;
+  claimant_source_verified?: boolean;
+  respondent_source_verified?: boolean;
+}
+
+interface Brief {
+  brief_id: number;
+  case_id: number;
+  juror: string;
+  juror_handle: string;
+  side: string;
+  argument: string;
+  upvotes: number;
+}
+
+interface Stats {
+  total_cases: number;
+  open_cases: number;
+  adjudicated_cases: number;
+  cancelled_cases: number;
+  total_briefs: number;
+  votes_for_claimant: number;
+  votes_for_respondent: number;
+  escrow_in_dispute: number;
+  escrow_vault_balance: number;
+  tribunal_clock: number;
 }
 
 interface Toast {
@@ -39,64 +104,71 @@ interface Toast {
   text: string;
 }
 
+const LOGO_URL = `${import.meta.env.BASE_URL}logo.png`;
+
+const PRESET = {
+  respondent: "0x154a452b0755EE812014C1405B15D905BA06f9c7",
+  case_title: "Vue dashboard migration bounty",
+  contract_rubric:
+    "Port the legacy jQuery dashboard to Vue 3, keep the REST contract, ship the VUE-77 test suite green",
+  mandatory_spec_token: "VUE-77",
+  claimant_evidence_url: "https://github.com/nimbus-labs/dashboard/pull/77",
+  disputed_escrow: 120000,
+};
+
 export default function App() {
   const [wallet, setWallet] = useState<WalletState | null>(null);
   const [contract, setContract] = useState(contractAddress());
-  const [dockets, setDockets] = useState<Docket[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [cases, setCases] = useState<DisputeCase[]>([]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selected, setSelected] = useState<DisputeCase | null>(null);
   const [briefs, setBriefs] = useState<Brief[]>([]);
-  const [stats, setStats] = useState<TribunalStats | null>(null);
-  const [custody, setCustody] = useState<CustodySummary | null>(null);
-  const [leaderboard, setLeaderboard] = useState<LeaderRow[]>([]);
-  const [refundable, setRefundable] = useState(0);
-  const [lastRejection, setLastRejection] = useState("");
-  const [claimableAward, setClaimableAward] = useState(0);
-  const [cetBalance, setCetBalance] = useState(0);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [leaderboard, setLeaderboard] = useState<{ juror: string; reputation: number }[]>([]);
+  const [claimable, setClaimable] = useState(0);
+  const [walletCet, setWalletCet] = useState(0);
   const [toast, setToast] = useState<Toast | null>(null);
   const [busy, setBusy] = useState(false);
   const [muted, setMutedState] = useState(isMuted());
-  const nowEpoch = Math.floor(Date.now() / 1000);
 
-  const selected = dockets.find((d) => d.docket_id === selectedId) ?? null;
-
-  const flash = (kind: Toast["kind"], text: string) => setToast({ kind, text });
   const toggleSound = () => {
     const m = toggleMuted();
     setMutedState(m);
     if (!m) click();
   };
 
-  const load = useCallback(async (w: WalletState) => {
-    try {
-      // Initial load is bounded to four RPC reads.
-      const all = await readContract<Docket[]>(w, "get_all_dockets");
-      const st = await readContract<TribunalStats>(w, "get_tribunal_stats");
-      const cu = await readContract<CustodySummary>(w, "get_custody_accounting_summary");
-      const ref = await readContract<number>(w, "get_refundable_balance", [w.address]);
-      setDockets(all);
-      setStats(st);
-      setCustody(cu);
-      setRefundable(Number(ref));
-      if (all.length && !selectedId) setSelectedId(all[all.length - 1].docket_id);
-    } catch (e) {
-      flash("err", `Read failed: ${(e as Error).message}`);
-    }
-  }, [selectedId]);
+  const flash = (kind: Toast["kind"], text: string) => setToast({ kind, text });
 
-  const loadExtras = useCallback(async (w: WalletState) => {
-    try {
-      const lb = await readContract<LeaderRow[]>(w, "get_judicial_leaderboard");
-      const rej = await readContract<string>(w, "get_last_payable_rejection", [w.address]);
-      const award = await readContract<number>(w, "get_claimable_award", [w.address]);
-      const cet = await readContract<number>(w, "get_cet_balance", [w.address]);
-      setLeaderboard(lb);
-      setLastRejection(String(rej));
-      setClaimableAward(Number(award));
-      setCetBalance(Number(cet));
-    } catch {
-      /* extras are non-fatal */
-    }
-  }, []);
+  const load = useCallback(
+    async (w: WalletState, cid: number | null) => {
+      try {
+        const all = await readContract<DisputeCase[]>(w, "get_all_cases");
+        setCases(all);
+        const st = await readContract<Stats>(w, "get_tribunal_stats");
+        setStats(st);
+        const lb = await readContract<{ juror: string; reputation: number }[]>(
+          w,
+          "get_juror_leaderboard",
+        );
+        setLeaderboard(lb);
+        const cw = await readContract<number>(w, "get_claimable_award", [w.address]);
+        setClaimable(Number(cw));
+        const cet = await getWalletBalance(w, w.address);
+        setWalletCet(Number(cet));
+        const id = cid ?? (all.length ? all[all.length - 1].case_id : null);
+        if (id != null) {
+          setSelectedId(id);
+          const one = await readContract<DisputeCase>(w, "get_case", [id]);
+          setSelected(one);
+          const bs = await readContract<Brief[]>(w, "get_case_briefs", [id]);
+          setBriefs(bs);
+        }
+      } catch (e) {
+        flash("err", `Read failed: ${(e as Error).message}`);
+      }
+    },
+    [],
+  );
 
   const connect = async (mode: "burner" | "metamask") => {
     click();
@@ -105,9 +177,8 @@ export default function App() {
       const w = mode === "burner" ? connectBurner() : await connectMetaMask();
       setWallet(w);
       hum();
-      flash("ok", `Sworn in ${mode} counsel ${shortAddr(w.address)}`);
-      await load(w);
-      await loadExtras(w);
+      flash("ok", `Connected ${mode} wallet ${short(w.address)}`);
+      await load(w, selectedId);
     } catch (e) {
       errorBuzz();
       flash("err", (e as Error).message);
@@ -119,51 +190,46 @@ export default function App() {
   const rotate = async () => {
     click();
     rotateBurner();
-    const w = connectBurner();
-    setWallet(w);
-    await load(w);
-    await loadExtras(w);
-    flash("ok", "Rotated to a fresh counsel identity");
+    await connect("burner");
+    flash("ok", "Rotated to a fresh juror identity");
   };
 
-  const selectDocket = async (id: string) => {
+  const selectCase = async (id: number) => {
     if (!wallet) return;
     click();
     setSelectedId(id);
-    try {
-      const bs = await readContract<Brief[]>(wallet, "get_docket_briefs", [id]);
-      setBriefs(bs);
-    } catch {
-      setBriefs([]);
-    }
+    const one = await readContract<DisputeCase>(wallet, "get_case", [id]);
+    setSelected(one);
+    const bs = await readContract<Brief[]>(wallet, "get_case_briefs", [id]);
+    setBriefs(bs);
+    hum();
   };
 
   const runWrite = async (
     fn: string,
     args: unknown[],
-    opts: { label: string; value?: bigint; leaderOnly?: boolean },
+    opts: { leaderOnly?: boolean; label: string },
   ) => {
     if (!wallet) return;
     try {
       setBusy(true);
       hum();
       flash("pending", `${opts.label}: submitting to studionet consensus...`);
-      const res = await writeContract(wallet, fn, args, { leaderOnly: opts.leaderOnly ?? true, value: opts.value });
+      const res = await writeContract(wallet, fn, args, { leaderOnly: opts.leaderOnly });
       if (res.statusName !== "FINALIZED") {
         errorBuzz();
-        flash("err", `${opts.label}: ${res.statusName} (tx ${shortAddr(res.txHash)})`);
+        flash("err", `${opts.label}: ${res.statusName} (tx ${short(res.txHash)})`);
         return;
       }
       if (!res.succeeded) {
         errorBuzz();
-        flash("err", `${opts.label}: execution reverted (tx ${shortAddr(res.txHash)})`);
+        flash("err", `${opts.label}: execution reverted (tx ${short(res.txHash)})`);
         return;
       }
       chime();
       celebrate();
-      flash("ok", `${opts.label}: FINALIZED tx ${shortAddr(res.txHash)}`);
-      await load(wallet);
-      await loadExtras(wallet);
+      flash("ok", `${opts.label}: FINALIZED tx ${short(res.txHash)}`);
+      await load(wallet, selectedId);
     } catch (e) {
       errorBuzz();
       flash("err", `${opts.label} failed: ${(e as Error).message}`);
@@ -172,48 +238,67 @@ export default function App() {
     }
   };
 
-  const refresh = async () => {
-    if (!wallet) return;
+  // One-click adversarial probe: attempt to file a self-dealing case (respondent equals
+  // caller). The contract guard must revert it, and nothing is written on chain.
+  const probeGuard = async () => {
+    if (!wallet || busy) return;
     click();
     setBusy(true);
-    await load(wallet);
-    await loadExtras(wallet);
-    if (selectedId) {
-      const bs = await readContract<Brief[]>(wallet, "get_docket_briefs", [selectedId]).catch(() => [] as Brief[]);
-      setBriefs(bs as Brief[]);
+    flash("pending", "Security guard probe: filing self-dealing case (expect revert)...");
+    try {
+      const res = await writeContract(
+        wallet,
+        "file_dispute_case",
+        [wallet.address, "guard probe", "guard rubric text", "TOK", "https://example.com/x", 5000],
+        { leaderOnly: true },
+      );
+      if (!res.succeeded) {
+        errorBuzz();
+        flash("ok", `Guard held: self-dealing case reverted as expected (tx ${short(res.txHash)})`);
+      } else {
+        chime();
+        flash("err", "Guard FAILED: self-dealing case was unexpectedly accepted");
+      }
+    } catch (e) {
+      errorBuzz();
+      flash("ok", `Guard held: probe reverted (${(e as Error).message.slice(0, 60)})`);
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
-    flash("ok", "Chamber refreshed");
   };
 
-  // RuleBench probes. The soft-fail probe deliberately self-deals so the contract must
-  // refund the value instead of reverting; the pre-deadline probe attempts an early trial.
-  const runSoftFailProbe = useCallback(async (): Promise<string> => {
-    if (!wallet) return "connect a wallet first";
-    const id = "PROBE-" + Date.now().toString(36);
-    const res = await writeContract(
-      wallet,
-      "file_dispute_payable",
-      [id, wallet.address, "probe", "https://a.dev/s", "https://a.dev/p", "probe summary", "P", 100, 3600, 3600],
-      { leaderOnly: true, value: 1234n },
-    );
-    const ref = await readContract<number>(wallet, "get_refundable_balance", [wallet.address]);
-    setRefundable(Number(ref));
-    return `status=${res.statusName} refundable_now=${ref}`;
-  }, [wallet]);
-
-  const runPreDeadlineProbe = useCallback(async (): Promise<string> => {
-    if (!wallet || !selected) return "select an open docket first";
-    if (selected.status !== "OPEN_FOR_REBUTTAL") return "docket already past the rebuttal gate";
-    const res = await writeContract(wallet, "adjudicate_docket", [selected.docket_id], { leaderOnly: true });
-    return res.succeeded
-      ? "UNEXPECTED: adjudication was allowed before the rebuttal deadline"
-      : `refused as required (execution reverted before the deadline)`;
-  }, [wallet, selected]);
+  // ---- action forms ----
+  const [fileForm, setFileForm] = useState({ ...PRESET });
+  const [rebuttalForm, setRebuttalForm] = useState({ url: "", note: "" });
+  const [briefForm, setBriefForm] = useState({
+    handle: "juror",
+    side: "SUPPORT_CLAIMANT",
+    argument: "",
+  });
+  const [liveBusy, setLiveBusy] = useState(false);
+  const [splitForm, setSplitForm] = useState({ bps: 6000, opinion: "" });
 
   const isClaimant = selected && wallet && eq(selected.claimant, wallet.address);
   const isRespondent = selected && wallet && eq(selected.respondent, wallet.address);
+  const isParty = Boolean(isClaimant || isRespondent);
   const isOpen = selected && (selected.status === "OPEN_FOR_REBUTTAL" || selected.status === "READY_FOR_TRIAL");
+  const isAdjudicable =
+    selected &&
+    ["OPEN_FOR_REBUTTAL", "READY_FOR_TRIAL", "REBUTTAL_DEADLINE_PASSED"].includes(selected.status);
+  const isSettled =
+    selected && (selected.status === "ADJUDICATED" || selected.status === "SETTLED_MUTUAL");
+  const hasProposal = selected && (selected.split_proposer === "CLAIMANT" || selected.split_proposer === "RESPONDENT");
+  const canCoSign =
+    isAdjudicable &&
+    hasProposal &&
+    wallet &&
+    ((selected!.split_proposer === "CLAIMANT" && eq(selected!.respondent, wallet.address)) ||
+      (selected!.split_proposer === "RESPONDENT" && eq(selected!.claimant, wallet.address)));
+
+  const awardPct = useMemo(
+    () => (selected ? (selected.claimant_award_bps / 10000) * 100 : 0),
+    [selected],
+  );
 
   return (
     <div className="app">
@@ -222,125 +307,530 @@ export default function App() {
         <img src={LOGO_URL} alt="CourtOfCode" />
         <div className="title-block">
           <h1>
-            <Scale size={18} className="h1icon" /> CourtOfCode Chancery
+            <Scale size={18} className="h1icon" /> CourtOfCode Tribunal
           </h1>
-          <div className="sub">Decentralized software arbitration &amp; judicial chamber workbench on GenLayer studionet</div>
+          <div className="sub">
+            Decentralized bounty &amp; PR dispute court on GenLayer studionet
+          </div>
         </div>
         <div className="spacer" />
-        <button className="ghost iconbtn" onClick={toggleSound} aria-label={muted ? "Unmute" : "Mute"}>
+        <button
+          className="ghost iconbtn"
+          onClick={toggleSound}
+          title={muted ? "Unmute UI sound" : "Mute UI sound"}
+          aria-label={muted ? "Unmute" : "Mute"}
+        >
           {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
         </button>
-        <button className="ghost iconbtn" onClick={refresh} disabled={busy || !wallet} aria-label="Refresh">
-          <RefreshCw size={16} />
-        </button>
         <div className="wallet">
-          {!wallet ? (
+          {!wallet && (
             <>
               <button className="primary" disabled={busy} onClick={() => connect("burner")}>
-                <Wallet size={14} className="btnicon" /> 1-Click Burner Counsel
+                <Wallet size={14} className="btnicon" /> 1-Click Instant Juror Wallet
               </button>
               <button disabled={busy} onClick={() => connect("metamask")}>
                 Connect MetaMask
               </button>
             </>
-          ) : (
+          )}
+          {wallet && (
             <>
               <span className="badge">{wallet.mode}</span>
-              <span className="badge live">{shortAddr(wallet.address)}</span>
-              <span className="badge cet">{cetBalance} CET</span>
-              <button className="ghost" disabled={busy} onClick={rotate}>Rotate</button>
-              <button className="ghost" onClick={() => setWallet(null)}>Disconnect</button>
+              <span className="badge live">{short(wallet.address)}</span>
+              <button className="ghost" disabled={busy} onClick={rotate} title="New burner identity">
+                <RefreshCw size={13} className="btnicon" /> Rotate Identity
+              </button>
+              <button className="ghost" onClick={() => setWallet(null)}>
+                Disconnect
+              </button>
             </>
           )}
         </div>
       </header>
 
-      <div className="bench-grid">
-        <div className="col">
-          <DocketRegistry dockets={dockets} selectedId={selectedId} onSelect={selectDocket} />
-          <CustodyDrawer
-            custody={custody}
-            refundable={refundable}
-            lastRejection={lastRejection}
-            claimableAward={claimableAward}
-            connected={!!wallet}
-            busy={busy}
-            onClaimRefund={() => runWrite("claim_refundable_balance", [], { label: "Claim refund" })}
-            onWithdrawRefund={(a) => runWrite("withdraw_refund", [a], { label: "Withdraw refund" })}
-            onWithdrawAward={() => runWrite("withdraw_award", [], { label: "Withdraw award" })}
-            onFundCet={(a) => runWrite("fund_cet_vault_payable", [], { label: "Fund CET", value: BigInt(a) })}
-          />
+      <Simulator
+        escrow={selected?.disputed_escrow ?? 250000}
+        bps={selected?.claimant_award_bps ?? 6000}
+        specTokenFound={(selected?.claimant_award_bps ?? 6000) > 5000}
+      />
+
+      <div className="grid">
+        <div>
           <section className="panel">
-            <h2><Gavel size={15} className="h2icon" /> Judicial Leaderboard</h2>
-            {leaderboard.length === 0 && <div className="muted">No counsel reputation yet.</div>}
-            {leaderboard.map((r) => (
-              <div className="leader-row" key={r.juror}>
-                <span>{shortAddr(r.juror)}</span>
-                <span className="brass">{r.reputation} rep</span>
+            <h2>
+              <Gavel size={15} className="h2icon" /> Docket
+            </h2>
+            {!wallet && <div className="muted">Connect a wallet to read the live tribunal.</div>}
+            {wallet && (
+              <div className="case-list">
+                {cases.length === 0 && <div className="muted">No cases filed yet.</div>}
+                {cases.map((c) => (
+                  <div
+                    key={c.case_id}
+                    className={`case-row ${c.case_id === selectedId ? "active" : ""}`}
+                    onClick={() => selectCase(c.case_id)}
+                  >
+                    <span>
+                      <span className="id">#{c.case_id}</span> {c.case_title}
+                    </span>
+                    <span className={`status-chip status-${c.status}`}>{c.status}</span>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </section>
-          <section className="panel">
-            <h2><Scale size={15} className="h2icon" /> Chancery Contract</h2>
-            <div className="inline">
-              <input value={contract} onChange={(e) => setContract(e.target.value)} />
-              <button className="ghost" onClick={() => { setContractAddress(contract); flash("ok", "Address saved"); if (wallet) load(wallet); }}>Apply</button>
-            </div>
-            <div className="txlink">
-              Explorer:{" "}
-              <a href={`https://genlayer-explorer.vercel.app/tx/${contract}`} target="_blank" rel="noreferrer">
-                {shortAddr(contract)}
-              </a>
-            </div>
-          </section>
-        </div>
 
-        <div className="col">
-          {!wallet && <div className="panel"><div className="muted">Sworn in a counsel wallet to open the live chamber.</div></div>}
-          <EvidenceBench
-            docket={selected}
-            briefs={briefs}
-            nowEpoch={nowEpoch}
-            busy={busy}
-            isClaimant={!!isClaimant}
-            isRespondent={!!isRespondent}
-            isOpen={!!isOpen}
-            onFile={(p) =>
-              runWrite(
-                "file_dispute_payable",
-                [p.docket_id, p.respondent, p.title, p.spec_reference_url, p.pr_evidence_url, p.brief_summary, p.mandatory_spec_token, p.principal_cet, p.rebuttal_window, p.appeal_window],
-                { label: "File dispute", value: BigInt(p.bond) },
-              )
-            }
-            onRebut={(id, text, bond) => runWrite("post_respondent_bond_payable", [id, text], { label: "Post rebuttal", value: BigInt(bond) })}
-            onBrief={(id, handle, side, arg) => runWrite("file_amicus_brief", [id, handle, side, arg], { label: "File amicus brief" })}
-            onUpvote={(bid) => runWrite("upvote_amicus_brief", [bid], { label: "Upvote brief" })}
-            onAdjudicate={(id) => runWrite("adjudicate_docket", [id], { label: "Consensus adjudication", leaderOnly: false })}
-            onChallenge={(id, bond) => runWrite("challenge_verdict_payable", [id], { label: "Challenge decree", value: BigInt(bond) })}
-            onSettle={(id) => runWrite("execute_decree_settlement", [id], { label: "Execute settlement" })}
-            onCancel={(id) => runWrite("cancel_docket", [id], { label: "Cancel docket" })}
-          />
-        </div>
+          {selected && (
+            <section className="panel" style={{ marginTop: 16 }}>
+              <h2>
+                Case #{selected.case_id} &middot; {selected.case_title}
+              </h2>
+              <div className="muted small" style={{ marginBottom: 10 }}>
+                Rubric: {selected.contract_rubric}
+                <br />
+                Mandatory spec token: <span style={{ color: "var(--gold)" }}>{selected.mandatory_spec_token}</span>
+                {" "}&middot; Escrow {selected.disputed_escrow}
+              </div>
 
-        <div className="col">
-          <AwardMatrix docket={selected} />
-          <DecreeTranscript docket={selected} />
-          <RuleBench docket={selected} busy={busy} runSoftFailProbe={runSoftFailProbe} runPreDeadlineProbe={runPreDeadlineProbe} />
-          {stats && (
-            <section className="panel">
-              <h2>Chancery Docket Stats</h2>
-              <div className="meta-grid">
-                <div className="cell"><div className="k">Dockets</div>{stats.total_dockets}</div>
-                <div className="cell"><div className="k">Open</div>{stats.open_dockets}</div>
-                <div className="cell"><div className="k">Adjudicated</div>{stats.adjudicated_dockets}</div>
-                <div className="cell"><div className="k">Settled</div>{stats.settled_dockets}</div>
-                <div className="cell"><div className="k">Void</div>{stats.void_dockets}</div>
-                <div className="cell"><div className="k">Briefs</div>{stats.total_briefs}</div>
-                <div className="cell"><div className="k">Votes C/R</div>{stats.votes_for_claimant}/{stats.votes_for_respondent}</div>
-                <div className="cell"><div className="k">Vault custody</div>{stats.vault_custody_balance}</div>
+              <div className="evidence-bench">
+                <div className="evidence claimant">
+                  <div className="who">Claimant deliverable proof</div>
+                  <div className="url">
+                    <a href={selected.claimant_evidence_url} target="_blank" rel="noreferrer">
+                      {selected.claimant_evidence_url}
+                    </a>
+                  </div>
+                  <div className="note">
+                    Votes for claimant: {selected.votes_for_claimant}
+                  </div>
+                </div>
+                <div className="evidence respondent">
+                  <div className="who">Respondent rebuttal</div>
+                  {selected.respondent_rebuttal_url ? (
+                    <div className="url">
+                      <a href={selected.respondent_rebuttal_url} target="_blank" rel="noreferrer">
+                        {selected.respondent_rebuttal_url}
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="muted">No rebuttal submitted yet.</div>
+                  )}
+                  {selected.rebuttal_note && <div className="note">{selected.rebuttal_note}</div>}
+                  <div className="note">
+                    Votes for respondent: {selected.votes_for_respondent}
+                  </div>
+                </div>
+              </div>
+
+              <div className="award-bar">
+                <div className="award-flex">
+                  <div className="award-main">
+                    <div className="award-pct">
+                      Split award: {awardPct.toFixed(1)}% claimant / {(100 - awardPct).toFixed(1)}%
+                      respondent &middot;{" "}
+                      <span className={`status-chip status-${selected.status}`}>{selected.verdict_label}</span>
+                    </div>
+                    <div className="award-track">
+                      <div className="award-fill" style={{ width: `${awardPct}%` }} />
+                    </div>
+                    <div className="award-labels">
+                      <span>0 bps</span>
+                      <span>{selected.claimant_award_bps} bps to claimant</span>
+                      <span>10000 bps</span>
+                    </div>
+                  </div>
+                  <div className="award-gauge">
+                    <Gauge value={selected.claimant_award_bps} caption="claimant award" />
+                  </div>
+                </div>
+                {isSettled && (
+                  <div className="meta-grid">
+                    <div className="cell">
+                      <div className="k">Claimant payout</div>
+                      {selected.claimant_payout}
+                    </div>
+                    <div className="cell">
+                      <div className="k">Respondent payout</div>
+                      {selected.respondent_payout}
+                    </div>
+                    <div className="cell">
+                      <div className="k">Conserved</div>
+                      {selected.claimant_payout + selected.respondent_payout === selected.disputed_escrow
+                        ? "yes"
+                        : "no"}
+                    </div>
+                  </div>
+                )}
+                {selected.judicial_opinion && (
+                  <div className="txlink" style={{ marginTop: 8 }}>
+                    Opinion: {selected.judicial_opinion}
+                  </div>
+                )}
+              </div>
+
+              <PromptInspector c={selected} />
+
+              <div className="meta-grid" style={{ marginTop: 12 }}>
+                <div className="cell">
+                  <div className="k">Custody locked</div>
+                  {selected.disputed_escrow} CET
+                </div>
+                <div className="cell">
+                  <div className="k">Native Bonds</div>
+                  {(selected.filer_bond ?? 0) + (selected.respondent_bond ?? 0) + (selected.challenge_bond ?? 0)} wei
+                </div>
+                <div className="cell">
+                  <div className="k">Evidence Status</div>
+                  {selected.evidence_verification_status || "PENDING"}
+                </div>
+                <div className="cell">
+                  <div className="k">Rebuttal filed</div>
+                  {selected.rebuttal_submitted ? "yes" : "no"}
+                </div>
+                <div className="cell">
+                  <div className="k">Response window</div>
+                  clock {selected.filed_at_clock} &rarr; {selected.rebuttal_deadline_clock}
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10 }}>
+                <span className={`approve-badge ${selected.claimant_approved_split ? "on" : ""}`}>
+                  Claimant {selected.claimant_approved_split ? "Approved" : "Pending"}
+                </span>{" "}
+                <span className={`approve-badge ${selected.respondent_approved_split ? "on" : ""}`}>
+                  Respondent {selected.respondent_approved_split ? "Approved" : "Pending"}
+                </span>
+                {selected.split_proposer && (
+                  <div className="muted small" style={{ marginTop: 6 }}>
+                    Proposed {selected.proposed_split_bps} bps by {selected.split_proposer}:
+                    {" "}
+                    {selected.settlement_proposal_note}
+                  </div>
+                )}
+              </div>
+
+              {isAdjudicable && isParty && wallet && (
+                <div className="row" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                  <input
+                    type="number"
+                    style={{ width: 110 }}
+                    value={splitForm.bps}
+                    onChange={(e) => setSplitForm({ ...splitForm, bps: Number(e.target.value) })}
+                    placeholder="bps"
+                  />
+                  <input
+                    style={{ flex: 1, minWidth: 160 }}
+                    value={splitForm.opinion}
+                    onChange={(e) => setSplitForm({ ...splitForm, opinion: e.target.value })}
+                    placeholder="settlement opinion note"
+                  />
+                  <button
+                    className="primary"
+                    disabled={busy}
+                    onClick={() =>
+                      runWrite("propose_deterministic_split", [selected.case_id, splitForm.bps, splitForm.opinion], {
+                        label: "Propose split",
+                      })
+                    }
+                  >
+                    Propose Split
+                  </button>
+                  {canCoSign && (
+                    <button
+                      className="gold"
+                      disabled={busy}
+                      onClick={() =>
+                        runWrite(
+                          "adjudicate_case_deterministic",
+                          [selected.case_id, selected.proposed_split_bps, splitForm.opinion],
+                          { label: "Co-authorize split" },
+                        )
+                      }
+                    >
+                      Co-authorize {selected.proposed_split_bps} bps
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {isAdjudicable && selected.status === "OPEN_FOR_REBUTTAL" && !selected.rebuttal_submitted && wallet && (
+                <div className="actions" style={{ marginTop: 8 }}>
+                  <button
+                    className="ghost"
+                    disabled={busy}
+                    onClick={() => runWrite("advance_tribunal_clock", [1], { label: "Advance clock" })}
+                  >
+                    Advance Tribunal Clock
+                  </button>
+                  <button
+                    className="ghost"
+                    disabled={busy}
+                    onClick={() => runWrite("expire_rebuttal_window", [selected.case_id], { label: "Expire window" })}
+                  >
+                    Expire Rebuttal Window
+                  </button>
+                </div>
+              )}
+
+              <div className="actions">
+                {isRespondent && selected.status === "OPEN_FOR_REBUTTAL" && (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      runWrite("submit_respondent_rebuttal", [selected.case_id, rebuttalForm.url, rebuttalForm.note], {
+                        label: "Submit rebuttal",
+                      })
+                    }
+                  >
+                    Submit Rebuttal
+                  </button>
+                )}
+                {isOpen && (
+                  <button
+                    disabled={busy || liveBusy}
+                    onClick={async () => {
+                      setLiveBusy(true);
+                      await runWrite("adjudicate_case_live", [selected.case_id], {
+                        leaderOnly: false,
+                        label: "Live AI adjudication",
+                      });
+                      setLiveBusy(false);
+                    }}
+                  >
+                    {liveBusy ? "Adjudicating (full consensus)..." : (<><Radio size={13} className="btnicon" /> Trigger Live AI Adjudication</>)}
+                  </button>
+                )}
+                {isSettled && claimable > 0 && eq(selected.claimant, wallet!.address) && (
+                  <button className="gold" disabled={busy} onClick={() => runWrite("withdraw_award", [], { label: "Withdraw award" })}>
+                    Withdraw {claimable} CET
+                  </button>
+                )}
+                {isSettled && claimable > 0 && eq(selected.respondent, wallet!.address) && (
+                  <button className="gold" disabled={busy} onClick={() => runWrite("withdraw_award", [], { label: "Withdraw award" })}>
+                    Withdraw {claimable} CET
+                  </button>
+                )}
+                {isClaimant && selected.status === "OPEN_FOR_REBUTTAL" && selected.amicus_count === 0 && (
+                  <button className="ghost" disabled={busy} onClick={() => runWrite("cancel_case", [selected.case_id], { label: "Cancel case" })}>
+                    Cancel &amp; Refund
+                  </button>
+                )}
               </div>
             </section>
           )}
+
+          {selected && (
+            <section className="panel" style={{ marginTop: 16 }}>
+              <h2><Gavel size={15} className="h2icon" /> Amicus Briefs ({briefs.length})</h2>
+              {briefs.map((b) => (
+                <div className="brief" key={b.brief_id}>
+                  <div className="head">
+                    <span>
+                      @{b.juror_handle}{" "}
+                      <span
+                        className={
+                          b.side === "SUPPORT_CLAIMANT"
+                            ? "side-claimant"
+                            : b.side === "SUPPORT_RESPONDENT"
+                              ? "side-respondent"
+                              : "side-neutral"
+                        }
+                      >
+                        {b.side}
+                      </span>
+                    </span>
+                    <span>
+                      {b.upvotes} upvotes{" "}
+                      {isOpen && wallet && !eq(b.juror, wallet.address) && (
+                        <button
+                          className="ghost"
+                          disabled={busy}
+                          onClick={() => runWrite("upvote_amicus_brief", [b.brief_id], { label: "Upvote brief" })}
+                        >
+                          +1
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                  <div className="arg">{b.argument}</div>
+                </div>
+              ))}
+
+              {isOpen && wallet && (
+                <div style={{ marginTop: 10 }}>
+                  <div className="muted small" style={{ marginBottom: 6 }}>
+                    File an amicus brief (this also casts your weighted vote)
+                  </div>
+                  <div className="row" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <input
+                      style={{ flex: 1, minWidth: 120 }}
+                      value={briefForm.handle}
+                      onChange={(e) => setBriefForm({ ...briefForm, handle: e.target.value })}
+                      placeholder="juror handle"
+                    />
+                    <select
+                      value={briefForm.side}
+                      onChange={(e) => setBriefForm({ ...briefForm, side: e.target.value })}
+                    >
+                      <option value="SUPPORT_CLAIMANT">SUPPORT_CLAIMANT</option>
+                      <option value="SUPPORT_RESPONDENT">SUPPORT_RESPONDENT</option>
+                      <option value="NEUTRAL_TECHNICAL">NEUTRAL_TECHNICAL</option>
+                    </select>
+                  </div>
+                  <div className="row">
+                    <textarea
+                      value={briefForm.argument}
+                      onChange={(e) => setBriefForm({ ...briefForm, argument: e.target.value })}
+                      placeholder="technical argument (max 300 chars)"
+                    />
+                  </div>
+                  <button
+                    className="primary"
+                    disabled={busy || briefForm.argument.length === 0}
+                    onClick={() =>
+                      runWrite("file_amicus_brief", [selected.case_id, briefForm.handle, briefForm.side, briefForm.argument], {
+                        label: "File amicus brief",
+                      })
+                    }
+                  >
+                    File Brief &amp; Vote
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
+        </div>
+
+        <div>
+          {wallet && (
+            <section className="panel">
+              <h2>
+                <Gavel size={15} className="h2icon" /> File New Dispute Case
+              </h2>
+              <div className="row">
+                <label>Respondent address</label>
+                <input value={fileForm.respondent} onChange={(e) => setFileForm({ ...fileForm, respondent: e.target.value })} />
+              </div>
+              <div className="row">
+                <label>Case title</label>
+                <input value={fileForm.case_title} onChange={(e) => setFileForm({ ...fileForm, case_title: e.target.value })} />
+              </div>
+              <div className="row">
+                <label>Contract rubric</label>
+                <textarea value={fileForm.contract_rubric} onChange={(e) => setFileForm({ ...fileForm, contract_rubric: e.target.value })} />
+              </div>
+              <div className="row">
+                <label>Mandatory spec token</label>
+                <input value={fileForm.mandatory_spec_token} onChange={(e) => setFileForm({ ...fileForm, mandatory_spec_token: e.target.value })} />
+              </div>
+              <div className="row">
+                <label>Claimant evidence URL</label>
+                <input value={fileForm.claimant_evidence_url} onChange={(e) => setFileForm({ ...fileForm, claimant_evidence_url: e.target.value })} />
+              </div>
+              <div className="row">
+                <label>Disputed escrow (100..10000000)</label>
+                <input type="number" value={fileForm.disputed_escrow} onChange={(e) => setFileForm({ ...fileForm, disputed_escrow: Number(e.target.value) })} />
+              </div>
+              <div className="actions">
+                <button
+                  className="primary"
+                  disabled={busy}
+                  onClick={() =>
+                    runWrite("file_dispute_case", [
+                      fileForm.respondent,
+                      fileForm.case_title,
+                      fileForm.contract_rubric,
+                      fileForm.mandatory_spec_token,
+                      fileForm.claimant_evidence_url,
+                      fileForm.disputed_escrow,
+                    ], { label: "File dispute case" })
+                  }
+                >
+                  File Case
+                </button>
+                <button className="ghost" onClick={() => setFileForm({ ...PRESET })}>
+                  <Sparkles size={13} className="btnicon" /> Quick-Fill Preset
+                </button>
+                <button className="danger" disabled={busy} onClick={probeGuard} title="Fire an adversarial probe that must revert">
+                  <ShieldAlert size={13} className="btnicon" /> Test Guard (Revert)
+                </button>
+              </div>
+            </section>
+          )}
+
+          <GuardLab wallet={wallet} />
+
+          {selected && isRespondent && (
+            <section className="panel" style={{ marginTop: 16 }}>
+              <h2>Rebuttal Inputs</h2>
+              <div className="row">
+                <label>Rebuttal URL (optional)</label>
+                <input value={rebuttalForm.url} onChange={(e) => setRebuttalForm({ ...rebuttalForm, url: e.target.value })} placeholder="https://..." />
+              </div>
+              <div className="row">
+                <label>Note</label>
+                <textarea value={rebuttalForm.note} onChange={(e) => setRebuttalForm({ ...rebuttalForm, note: e.target.value })} />
+              </div>
+            </section>
+          )}
+
+          <section className="panel" style={{ marginTop: 16 }}>
+            <h2><Sparkles size={15} className="h2icon" /> Tribunal Stats</h2>
+            {stats ? (
+              <div className="meta-grid">
+                <div className="cell"><div className="k">Cases</div>{stats.total_cases}</div>
+                <div className="cell"><div className="k">Open</div>{stats.open_cases}</div>
+                <div className="cell"><div className="k">Settled</div>{stats.adjudicated_cases}</div>
+                <div className="cell"><div className="k">Briefs</div>{stats.total_briefs}</div>
+                <div className="cell"><div className="k">Votes C/R</div>{stats.votes_for_claimant}/{stats.votes_for_respondent}</div>
+                <div className="cell"><div className="k">Escrow disputed</div>{stats.escrow_in_dispute}</div>
+                <div className="cell"><div className="k">Escrow vault (CET)</div>{stats.escrow_vault_balance}</div>
+                <div className="cell"><div className="k">Tribunal clock</div>{stats.tribunal_clock}</div>
+              </div>
+            ) : (
+              <div className="muted">Connect a wallet.</div>
+            )}
+            {wallet && (
+              <div className="muted small" style={{ marginTop: 8 }}>
+                Your wallet: <span style={{ color: "var(--gold)" }}>{walletCet} CET</span> &middot;{" "}
+                claimable award <span style={{ color: "var(--gold)" }}>{claimable} CET</span>
+              </div>
+            )}
+          </section>
+
+          <section className="panel" style={{ marginTop: 16 }}>
+            <h2><Trophy size={15} className="h2icon" /> Juror Leaderboard</h2>
+            {leaderboard.length === 0 && <div className="muted">No jurors yet.</div>}
+            {leaderboard.map((r) => (
+              <div className="leader-row" key={r.juror}>
+                <span>{short(r.juror)}</span>
+                <span style={{ color: "var(--gold)" }}>{r.reputation} rep</span>
+              </div>
+            ))}
+          </section>
+
+          <section className="panel" style={{ marginTop: 16 }}>
+            <h2><Scale size={15} className="h2icon" /> Contract</h2>
+            <div className="row">
+              <input value={contract} onChange={(e) => setContract(e.target.value)} />
+            </div>
+            <button
+              className="ghost"
+              onClick={() => {
+                setContractAddress(contract);
+                flash("ok", "Contract address saved");
+                if (wallet) load(wallet, null);
+              }}
+            >
+              Apply address
+            </button>
+            <div className="txlink" style={{ marginTop: 8 }}>
+              Explorer:{" "}
+              <a href={`https://genlayer-explorer.vercel.app/tx/${contract}`} target="_blank" rel="noreferrer">
+                {short(contract)}
+              </a>
+            </div>
+          </section>
         </div>
       </div>
 
@@ -351,6 +841,11 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function short(addr: string) {
+  if (!addr) return "";
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
 function eq(a: string, b: string) {

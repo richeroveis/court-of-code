@@ -5,8 +5,8 @@ import {
 } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 
-// Deployed CourtOfCode Chancery v1 on studionet (chain 61999).
-export const DEFAULT_CONTRACT = "0xD53816C72a715f317eA689916693308e8f701039";
+// Deployed CourtOfCode tribunal on studionet (chain 61999).
+export const DEFAULT_CONTRACT = "0x9fe1f0F1769Fc5481E43b2C9b8d422869763cC81";
 export const STUDIONET_RPC = "https://studio.genlayer.com/api";
 
 const CONTRACT_KEY = "courtofcode.contract";
@@ -114,13 +114,13 @@ export async function writeContract(
   wallet: WalletState,
   functionName: string,
   args: unknown[],
-  opts: { leaderOnly?: boolean; value?: bigint } = {},
+  opts: { leaderOnly?: boolean } = {},
 ): Promise<WriteResult> {
   const hash = (await wallet.client.writeContract({
     address: contractAddress() as `0x${string}`,
     functionName,
     args: args as never,
-    value: opts.value ?? 0n,
+    value: 0n,
     leaderOnly: opts.leaderOnly ?? true,
   })) as string;
 
@@ -153,4 +153,48 @@ function receiptSucceeded(receipt: ReceiptLike): boolean {
   if (!Array.isArray(leaders) || leaders.length === 0) return false;
   const leader = leaders[0] as ReceiptLike;
   return leader.execution_result === "SUCCESS" || leader.executionResult === "SUCCESS";
+}
+
+// ---------------------------------------------------------------------------
+// Typed client calls for the custody, two-party settlement and deadline flow.
+// ---------------------------------------------------------------------------
+
+export function getWalletBalance(wallet: WalletState, account: string): Promise<number> {
+  return readContract<number>(wallet, "get_wallet_balance", [account]);
+}
+
+export function claimFaucetTokens(wallet: WalletState): Promise<WriteResult> {
+  return writeContract(wallet, "claim_faucet_tokens", []);
+}
+
+export function proposeDeterministicSplit(
+  wallet: WalletState,
+  caseId: number,
+  bps: number,
+  opinion: string,
+): Promise<WriteResult> {
+  return writeContract(wallet, "propose_deterministic_split", [caseId, bps, opinion]);
+}
+
+export function acceptDeterministicSplit(
+  wallet: WalletState,
+  caseId: number,
+  bps: number,
+  opinion: string,
+): Promise<WriteResult> {
+  return writeContract(wallet, "adjudicate_case_deterministic", [caseId, bps, opinion]);
+}
+
+export function advanceTribunalClock(
+  wallet: WalletState,
+  steps: number,
+): Promise<WriteResult> {
+  return writeContract(wallet, "advance_tribunal_clock", [steps]);
+}
+
+export function expireRebuttalWindow(
+  wallet: WalletState,
+  caseId: number,
+): Promise<WriteResult> {
+  return writeContract(wallet, "expire_rebuttal_window", [caseId]);
 }
